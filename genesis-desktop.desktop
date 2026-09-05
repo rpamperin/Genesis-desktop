@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Genesis
+Comment=Voice assistant for the Genesis backend
+Exec=genesis-desktop
+Icon=genesis-desktop
+Terminal=false
+Categories=Utility;AudioVideo;
+Keywords=assistant;voice;alfred;yui;
+StartupNotify=true

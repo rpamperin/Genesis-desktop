@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genesis-desktop"
+version = "0.1.0"
+description = "Native desktop voice client for the Genesis assistant backend"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6",
+    "httpx>=0.27",
+    "numpy>=1.24",
+    "sounddevice>=0.4.6",
+]
+
+[project.optional-dependencies]
+# offline speech to text + wake word
+voice = ["vosk>=0.3.45", "piper-tts>=1.2"]
+# local whisper for higher-accuracy transcription (heavier)
+whisper = ["faster-whisper>=1.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+genesis-desktop = "genesis_desktop.app:main"
+
+[tool.setuptools.packages.find]
+include = ["genesis_desktop*"]
+
+[tool.setuptools.package-data]
+genesis_desktop = ["resources/*"]

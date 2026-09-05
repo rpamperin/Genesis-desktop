@@ -1,0 +1,12 @@
+# core
+PySide6>=6.6
+httpx>=0.27
+numpy>=1.24
+sounddevice>=0.4.6
+
+# voice (offline): wake word + speech to text, local text to speech
+vosk>=0.3.45
+piper-tts>=1.2
+
+# optional, heavier: local whisper for better transcripts
+# faster-whisper>=1.0
