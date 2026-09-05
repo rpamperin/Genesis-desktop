@@ -492,3 +492,59 @@ def test_pose_and_eyes_say_what_it_is_doing():
     assert c.brow_skew > 0.5                    # one brow up: pondering, not angry
     _settle(c, "muted")
     assert c.eye_open < 0.3                     # eyes shut
+
+
+def test_mouth_changes_shape_while_speaking():
+    """Amplitude alone gives a chewing motion. Speech should also move
+    between wide, round and narrow shapes."""
+    from genesis_desktop.ui.character import Character
+    c = Character()
+    c.set_state("speaking")
+    widths, rounds = set(), set()
+    for i in range(600):
+        c.level = 0.3 + 0.25 * (i % 7) / 7
+        c.advance(1 / 60)
+        widths.add(round(c.mouth_wide, 1))
+        rounds.add(round(c.mouth_round, 1))
+    assert len(widths) > 3, widths          # corners actually move
+    assert len(rounds) > 2, rounds          # it purses as well as spreads
+
+
+def test_expressions_are_distinct():
+    from genesis_desktop.ui.character import Character
+    c = Character()
+    _settle(c, "listening")
+    assert c.smile > 0.2                    # pleasant at rest
+    _settle(c, "thinking")
+    assert c.smile < 0 and c.squint > 0.3   # pursed and narrowed
+    _settle(c, "confirm")
+    assert c.brow > 0.6 and c.eye_open > 1.2
+    _settle(c, "hearing")
+    assert c.smile > 0.2 and c.brow > 0.3
+
+
+def test_alfred_is_bald_and_house_is_not():
+    from genesis_desktop.ui import character
+    assert character.look_for("alfred")["hair_style"] == "bald"
+    assert character.look_for("house")["hair_style"] == "short"
+    assert character.look_for("yui")["hair_style"] == "long"
+
+
+def test_every_persona_renders_in_every_state():
+    """The drawing code is full of path intersections and gradients; this
+    catches a persona/state combination that throws."""
+    from PySide6.QtGui import QColor, QImage, QPainter
+    from genesis_desktop.ui.character import Character, look_for
+    for name in ("alfred", "yui", "house", "someone-new"):
+        c = Character()
+        c.accent = QColor("#4fa3ff")
+        c.set_look(look_for(name, QColor("#22aa66")))
+        for state in ("offline", "muted", "listening", "hearing", "thinking",
+                      "tool", "confirm", "speaking"):
+            _settle(c, state, 0.5, seconds=0.4)
+            img = QImage(160, 180, QImage.Format_ARGB32)
+            img.fill(QColor("#0e1016"))
+            p = QPainter(img)
+            p.setRenderHint(QPainter.Antialiasing)
+            c.paint(p, 80, 90, 48, dim=state in ("offline", "muted"))
+            p.end()

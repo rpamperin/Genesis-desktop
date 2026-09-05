@@ -38,10 +38,17 @@ the backend; it only needs the backend's URL.
   moves with the sound of its own voice — driven by the same audio the
   speaker is playing, so the lips cannot drift out of sync. Each persona
   gets its own face, built from a handful of numbers (skin, hair, brow
-  weight, eye size, stubble, jaw) and tinted by the accent colour the
-  backend gives it; there is no model file to download. Alfred is a greying
-  butler in a bow tie, Yui is bright-eyed, House is unshaven with heavy
-  brows. Abstract orb, bars and ring styles are still there in Settings.
+  weight, eye size, stubble, jaw, lip fullness) and tinted by the accent
+  colour the backend gives it; there is no model file to download. Alfred is
+  a bald butler in a bow tie, Yui is bright-eyed, House is unshaven with
+  heavy brows. Abstract orb, bars and ring styles are still there in
+  Settings.
+- **The mouth is not one ellipse.** Upper and lower lips are separate shapes
+  with a cupid's bow; the jaw drops and lengthens the chin; the corners pull
+  wide or purse round; teeth appear behind the top lip and the tongue shows
+  on the wide vowels. Loudness sets how far it opens and a separate channel
+  sets *how*, changing at syllable rate, so speech alternates between wide,
+  round and narrow instead of chewing.
 - **Alfred can fix things.** Tools run on this machine: a real shell, files
   anywhere you can reach, services, logs, packages, processes, notifications,
   opening things, clipboard, screenshots, volume. Root actions go through

@@ -74,8 +74,8 @@ launch the app.
 ## Reading the window
 
 In the middle is the assistant's face. Each one looks different — Alfred is
-a greying butler in a bow tie, Yui is bright-eyed, House is unshaven with
-heavy brows — and it tells you what is happening without your having to read
+a bald butler in a bow tie, Yui is bright-eyed, House is unshaven with heavy
+brows — and it tells you what is happening without your having to read
 anything.
 
 | What it does | What it means |
@@ -89,7 +89,8 @@ anything.
 | Eyes closed, head down, grey | Muted, or the backend is not reachable |
 
 Its mouth is driven by the actual sound of its voice, so it moves in time
-with the words rather than flapping on a timer.
+with the words rather than flapping on a timer. The lips spread, purse and
+round as it talks, and you will see teeth and a tongue on the wide vowels.
 
 If you would rather have a shape than a face, Settings → Appearance also has
 an orb, a bar meter and a ring.
