@@ -55,28 +55,45 @@ def downloaded_voices() -> list[str]:
 def resolve_voice(persona: dict, override: str = "") -> str:
     """Which piper voice to use for a persona.
 
-    The override from Settings wins. Otherwise the backend's voice, if we
-    have it downloaded. Otherwise a downloaded voice of the persona's
-    voice_gender (House says male but the backend's default voice field is
-    a female one). Otherwise the backend's voice name, so the status bar
-    and the doctor can say exactly what to download.
+    The backend decides. A persona's voice is part of who it is -- set
+    alongside its prompt and temperature -- so whatever `GET /personas`
+    says is what we speak with, and the desktop does not second-guess it
+    from the voice_gender hint. The only things that come before it are an
+    explicit per-persona override in Settings, and (when the backend's
+    voice is not on this machine yet) a stand-in so it can still talk while
+    the real one downloads.
     """
     if override:
         return override
     want = (persona or {}).get("voice") or ""
-    gender = (persona or {}).get("voice_gender") or ""
     have = downloaded_voices()
-    if want in have and (not gender or PIPER_VOICE_GENDER.get(want, gender) == gender):
+    if not want:
+        return have[0] if have else DEFAULT_VOICE[""]
+    if want in have:
         return want
+    return substitute_voice(persona, have)
+
+
+def substitute_voice(persona: dict, have=None) -> str:
+    """A stand-in while the backend's chosen voice is not downloaded yet.
+    Prefers one of the same gender so it is not jarring."""
+    have = downloaded_voices() if have is None else have
+    gender = (persona or {}).get("voice_gender") or ""
     if gender:
         for v in have:
             if PIPER_VOICE_GENDER.get(v) == gender:
                 return v
-        if want not in have:
-            return DEFAULT_VOICE.get(gender, want or DEFAULT_VOICE[""])
-    if want in have:
+    if have:
+        return have[0]
+    return DEFAULT_VOICE.get(gender, DEFAULT_VOICE[""])
+
+
+def missing_voice(persona: dict, override: str = "") -> str:
+    """The backend's voice name when it is not on this machine, else ""."""
+    want = override or (persona or {}).get("voice") or ""
+    if want and want not in downloaded_voices():
         return want
-    return have[0] if have and not want else (want or DEFAULT_VOICE[""])
+    return ""
 
 
 def piper_voice_paths(name: str):

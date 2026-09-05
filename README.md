@@ -32,10 +32,16 @@ the backend; it only needs the backend's URL.
   a follow-up window after each reply so you do not repeat the name, push to
   talk (hold the button or Space), or always-on. A bare "Alfred?" gets a
   "Yes?" and an open ear. Say the name while it is talking to interrupt.
-- **A face that moves.** Orb, bars or ring; it breathes while listening,
-  opens up in green when it hears you, spins while thinking, goes amber
-  while a tool runs, red when it needs a yes, and moves with its own voice
-  while speaking. Each persona has its own colour.
+- **A face that moves.** The default view is an actual character: it looks
+  at you while it listens, its eyes widen and it leans in when it hears you,
+  it glances up and away with one brow raised while it thinks, and its mouth
+  moves with the sound of its own voice — driven by the same audio the
+  speaker is playing, so the lips cannot drift out of sync. Each persona
+  gets its own face, built from a handful of numbers (skin, hair, brow
+  weight, eye size, stubble, jaw) and tinted by the accent colour the
+  backend gives it; there is no model file to download. Alfred is a greying
+  butler in a bow tie, Yui is bright-eyed, House is unshaven with heavy
+  brows. Abstract orb, bars and ring styles are still there in Settings.
 - **Alfred can fix things.** Tools run on this machine: a real shell, files
   anywhere you can reach, services, logs, packages, processes, notifications,
   opening things, clipboard, screenshots, volume. Root actions go through
@@ -47,9 +53,12 @@ the backend; it only needs the backend's URL.
 - **Local mods.** Drop a folder in `~/.config/genesis-desktop/mods/` to add
   tools, spoken commands and hooks that run in this app, independent of the
   backend's mods. Enable them in Settings.
-- **Personas come from the backend.** Whatever `GET /personas` returns is
-  what you get: name, title, avatar, accent colour, greeting, and voice
-  (gender, pitch, speed). "Switch to Doctor House" works by title as well
+- **Personas come from the backend, voice included.** Whatever
+  `GET /personas` returns is what you get: name, title, avatar, accent
+  colour, greeting, and voice (name, gender, pitch, speed). The backend
+  picks the voice — a persona's voice is part of who it is — and if that
+  voice is not on this machine yet the app downloads it in the background
+  and speaks with a same-gender stand-in until it lands. "Switch to Doctor House" works by title as well
   as by name, and "House, …" is a wake word. The Agent page can create,
   edit and delete personas on the backend through its admin API.
 - **Accounts and conversations.** Log in to a backend with per-person
@@ -195,10 +204,9 @@ writes screenshots.
 - The backend does the thinking. This app never talks to a model directly.
 - The microphone is paused while it speaks unless barge-in is on; with
   barge-in, only the wake word interrupts, so it does not hear itself.
-- Voice per persona: the backend's voice if downloaded, otherwise a
-  downloaded Piper voice matching the persona's gender (House says male,
-  so he never gets Amy), otherwise a sensible default. Pitch and speed
-  apply on espeak-ng and Qt speech; Piper has no pitch knob.
+- Voice per persona: whatever the backend says, fetched on demand. Only an
+  explicit override in Settings beats it. Pitch and speed apply on espeak-ng
+  and Qt speech; Piper has no pitch knob.
 - Settings live in `~/.config/genesis-desktop/settings.json`; models and
   logs in `~/.local/share/genesis-desktop/`. Environment variables
   `GENESIS_DESKTOP_<KEY>` override any setting.

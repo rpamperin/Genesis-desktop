@@ -801,8 +801,10 @@ class SettingsWindow(QDialog):
         page, lay = _page("Appearance")
         f = QFormLayout()
         f.addRow("Theme", bound_combo("theme", ["dark", "light"], {"dark": "Dark", "light": "Light"}))
-        f.addRow("Visualizer", bound_combo("visual_style", ["orb", "bars", "ring"], {
-            "orb": "Orb  —  a living blob", "bars": "Bars  —  spectrum style", "ring": "Ring  —  radial"}))
+        f.addRow("Visualizer", bound_combo("visual_style", ["character", "orb", "bars", "ring"], {
+            "character": "Character  —  a face that looks and talks",
+            "orb": "Orb  —  a living blob", "bars": "Bars  —  spectrum style",
+            "ring": "Ring  —  radial"}))
         op = QSlider(Qt.Horizontal)
         op.setRange(30, 100)
         op.setValue(int(config.get("window_opacity") * 100))

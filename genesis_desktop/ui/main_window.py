@@ -199,6 +199,7 @@ class MainWindow(QMainWindow):
     def apply_theme(self):
         self.accent = theme.accent_for(self.ctl.persona, config.get("theme"))
         QApplication.instance().setStyleSheet(theme.stylesheet(config.get("theme"), self.accent))
+        self.visual.set_persona(self.ctl.persona)
         self.visual.set_accent(self.accent)
         self.visual.set_theme(config.get("theme"))
         self.setWindowIcon(make_icon(self.accent))

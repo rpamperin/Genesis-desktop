@@ -82,7 +82,7 @@ DEFAULTS = {
 
     # --- appearance -----------------------------------------------------
     "theme": "dark",                  # dark | light
-    "visual_style": "orb",            # orb | bars | ring
+    "visual_style": "character",      # character | orb | bars | ring
     "show_chat": False,
     "show_activity": True,
     "start_in_tray": False,
@@ -135,7 +135,7 @@ SCHEMA = {
     "allow_privileged":   {"type": bool},
     "enabled_mods":       {"type": list},
     "theme":              {"type": str, "choices": ["dark", "light"]},
-    "visual_style":       {"type": str, "choices": ["orb", "bars", "ring"]},
+    "visual_style":       {"type": str, "choices": ["character", "orb", "bars", "ring"]},
     "show_chat":          {"type": bool},
     "show_activity":      {"type": bool},
     "start_in_tray":      {"type": bool},

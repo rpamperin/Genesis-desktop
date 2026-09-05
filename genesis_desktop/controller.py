@@ -57,6 +57,7 @@ class Bridge(QObject):
     connect_failed = Signal(str)
     worker_error = Signal(str)
     stats = Signal(dict)
+    voice_ready = Signal(str)
     sessions = Signal(list)
     history = Signal(list)
     logged_in = Signal(str)
@@ -114,6 +115,7 @@ class Controller(QObject):
         self.speaker.on_sentence = lambda s: self.bridge.spoken.emit(s)
         self.speaker.on_error = lambda m: self.bridge.worker_error.emit(m)
         self.client_tools_support = None      # None: backend predates the protocol
+        self._voice_fetching = set()
         self._stats_timer = QTimer(self)
         self._stats_timer.setInterval(2000)
         self._stats_timer.timeout.connect(self._poll_stats)
@@ -132,6 +134,7 @@ class Controller(QObject):
         b.connect_failed.connect(self._on_connect_failed, Qt.QueuedConnection)
         b.worker_error.connect(self._on_worker_error, Qt.QueuedConnection)
         b.stats.connect(self._on_stats, Qt.QueuedConnection)
+        b.voice_ready.connect(self._on_voice_ready, Qt.QueuedConnection)
         b.sessions.connect(self.sessions_loaded, Qt.QueuedConnection)
         b.history.connect(self.history_loaded, Qt.QueuedConnection)
         b.logged_in.connect(self._on_logged_in, Qt.QueuedConnection)
@@ -238,6 +241,36 @@ class Controller(QObject):
         eng, note = self.speaker.configure(voice, self.voice_cfg.get("tts_engine", "browser"))
         self.status.emit("tts", f"{eng} · {voice}" if eng else f"no speech: {note}")
         self.listener.reconfigure()
+        self._fetch_backend_voice()
+
+    def _fetch_backend_voice(self):
+        """The backend chose a voice this machine does not have. Fetch it in
+        the background and switch to it when it lands; until then we speak
+        with the stand-in resolve_voice() picked."""
+        want = tts.missing_voice(self._persona_info(),
+                                 config.get("persona_voices").get(self.persona, ""))
+        if not want or want in self._voice_fetching:
+            return
+        self._voice_fetching.add(want)
+        self._log("system", f"downloading the voice {want} chosen by the backend")
+        self.status.emit("tts", f"downloading {want}…")
+
+        def worker():
+            try:
+                tts.download_piper_voice(want)
+                self.bridge.voice_ready.emit(want)
+            except Exception as e:
+                self.bridge.worker_error.emit(f"could not download the voice {want}: {e}")
+            finally:
+                self._voice_fetching.discard(want)
+        threading.Thread(target=worker, daemon=True, name="voice-dl").start()
+
+    @Slot(str)
+    def _on_voice_ready(self, name):
+        self._log("system", f"voice {name} ready")
+        voice = self.persona_voice()
+        eng, note = self.speaker.configure(voice, self.voice_cfg.get("tts_engine", "browser"))
+        self.status.emit("tts", f"{eng} · {voice}" if eng else f"no speech: {note}")
 
     # ------------------------------------------------------------------
     # accounts

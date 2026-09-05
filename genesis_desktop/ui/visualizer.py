@@ -1,6 +1,8 @@
 """The face of the assistant: a widget that moves with sound.
 
-Three styles share one animation model. A level (0..1) arrives from the
+Four styles share one animation model. "character" draws an actual face
+(see character.py) that looks at you, glances away while it thinks and
+moves its mouth with its own voice; the other three are abstract. A level (0..1) arrives from the
 microphone while listening and from the speaker while talking; it is
 smoothed with fast attack and slow release so the picture reacts instantly
 but never flickers. The state decides colour and behaviour:
@@ -26,6 +28,7 @@ from PySide6.QtGui import (QBrush, QColor, QLinearGradient, QPainter, QPainterPa
 from PySide6.QtWidgets import QWidget
 
 from . import theme
+from .character import Character, look_for
 
 
 def _alpha(c: QColor, a: float) -> QColor:
@@ -43,7 +46,7 @@ class Visualizer(QWidget):
         self.setMinimumSize(320, 240)
         self.setAttribute(Qt.WA_OpaquePaintEvent, False)
         self.state = "offline"
-        self.style = "orb"
+        self.style = "character"
         self.accent = theme.accent_for("alfred")
         self.theme_name = "dark"
         self._target = 0.0
@@ -54,6 +57,8 @@ class Visualizer(QWidget):
         self._spin = 0.0
         self._t0 = time.monotonic()
         self._particles = [self._new_particle(i) for i in range(N_PARTICLES)]
+        self.character = Character()
+        self.persona = "alfred"
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(16)
@@ -68,11 +73,18 @@ class Visualizer(QWidget):
         if s != self.state:
             self._flash = 1.0
         self.state = s
+        self.character.set_state(s)
         if s in ("listening", "muted", "offline", "thinking"):
             self._target = 0.0
 
     def set_accent(self, c: QColor):
         self.accent = QColor(c)
+        self.character.accent = QColor(c)
+        self.character.set_look(look_for(self.persona, self.accent))
+
+    def set_persona(self, name: str):
+        self.persona = name
+        self.character.set_look(look_for(name, self.accent))
 
     def set_style(self, style: str):
         self.style = style
@@ -100,6 +112,8 @@ class Visualizer(QWidget):
         spin_rate = {"thinking": 2.2, "tool": 3.5, "hearing": 0.6, "speaking": 0.9}.get(self.state, 0.25)
         self._spin += dt * spin_rate
         self._flash = max(0.0, self._flash - dt * 2.5)
+        self.character.level = self._level
+        self.character.advance(dt)
         # bars get individual jitter around the level so they look alive
         lvl = self._level
         for i in range(N_BARS):
@@ -139,6 +153,13 @@ class Visualizer(QWidget):
         glow.setColorAt(1.0, g1)
         p.fillRect(self.rect(), QBrush(glow))
 
+        if self.style == "character":
+            head = min(w * 0.30, h * 0.34)
+            self.character.paint(p, cx, cy + head * 0.12, head, dim=dim)
+            if self.state in ("thinking", "tool"):
+                pass                      # the character has its own busy cue
+            p.end()
+            return
         if self.style == "bars":
             self._paint_bars(p, cx, cy, base, col, alpha_scale)
         elif self.style == "ring":

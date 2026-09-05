@@ -102,7 +102,7 @@ def run():
             app.window.visual.set_level(0.08 + 0.05 * (i % 4))
             pump(16)
         shot("03b-house")
-        for style in ("orb", "bars", "ring"):
+        for style in ("character", "orb", "bars", "ring"):
             app.window.visual.set_style(style)
             app.window.visual.set_state("speaking")
             for i in range(20):

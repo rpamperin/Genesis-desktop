@@ -362,20 +362,6 @@ def test_switch_command_understands_titles():
     assert commands.match("switch to nobody", aliases) is None
 
 
-def test_resolve_voice_by_gender(clean_config, tmp_path):
-    config.set("piper_voice_dir", str(tmp_path))
-    house = {"voice": "en_US-amy-medium", "voice_gender": "male"}
-    # nothing downloaded: a sensible male default rather than Amy
-    assert tts.resolve_voice(house) == "en_GB-alan-medium"
-    (tmp_path / "en_US-ryan-high.onnx").write_bytes(b"x")
-    assert tts.resolve_voice(house) == "en_US-ryan-high"
-    (tmp_path / "en_US-amy-medium.onnx").write_bytes(b"x")
-    assert tts.resolve_voice({"voice": "en_US-amy-medium", "voice_gender": "female"}) == "en_US-amy-medium"
-    assert tts.resolve_voice(house) == "en_US-ryan-high"          # gender beats the backend's default
-    assert tts.resolve_voice(house, "en_GB-cori-high") == "en_GB-cori-high"   # override wins
-    config.reset("piper_voice_dir")
-
-
 def test_backend_accent_is_lifted_for_dark_theme():
     from genesis_desktop.ui import theme
     theme.set_backend_accents({"house": "#4a5859", "bad": "nope"})
@@ -424,3 +410,85 @@ def test_login_sessions_and_persona_admin(backend, clean_config):
     assert "nurse" not in [p["name"] for p in c.personas()]
     c.logout()
     config.set("account_token", "", persist=False)
+
+
+# ----------------------------------------------------------------------
+# the backend chooses the voice
+# ----------------------------------------------------------------------
+def test_backend_voice_wins_over_the_gender_hint(clean_config, tmp_path):
+    config.set("piper_voice_dir", str(tmp_path))
+    # House is male but the backend names a female voice: the backend decides
+    house = {"voice": "en_US-amy-medium", "voice_gender": "male"}
+    (tmp_path / "en_US-amy-medium.onnx").write_bytes(b"x")
+    (tmp_path / "en_US-ryan-high.onnx").write_bytes(b"x")
+    assert tts.resolve_voice(house) == "en_US-amy-medium"
+    assert tts.missing_voice(house) == ""
+    assert tts.resolve_voice(house, "en_GB-cori-high") == "en_GB-cori-high"
+    config.reset("piper_voice_dir")
+
+
+def test_stand_in_until_the_backend_voice_is_downloaded(clean_config, tmp_path):
+    config.set("piper_voice_dir", str(tmp_path))
+    house = {"voice": "en_GB-cori-high", "voice_gender": "male"}
+    # nothing downloaded at all
+    assert tts.resolve_voice(house) == "en_GB-alan-medium"
+    assert tts.missing_voice(house) == "en_GB-cori-high"
+    # a same-gender stand-in is preferred over an arbitrary one
+    (tmp_path / "en_US-amy-medium.onnx").write_bytes(b"x")
+    (tmp_path / "en_US-ryan-high.onnx").write_bytes(b"x")
+    assert tts.resolve_voice(house) == "en_US-ryan-high"
+    # ...and the moment the real one lands, it is used
+    (tmp_path / "en_GB-cori-high.onnx").write_bytes(b"x")
+    assert tts.resolve_voice(house) == "en_GB-cori-high"
+    assert tts.missing_voice(house) == ""
+    config.reset("piper_voice_dir")
+
+
+# ----------------------------------------------------------------------
+# the character
+# ----------------------------------------------------------------------
+def test_each_persona_gets_its_own_look():
+    from PySide6.QtGui import QColor
+    from genesis_desktop.ui import character
+    assert character.look_for("house")["stubble"] > 0
+    assert character.look_for("alfred")["accessory"] == "bowtie"
+    assert character.look_for("yui")["hair_style"] == "long"
+    # an unknown persona is tinted by the accent the backend gave it
+    look = character.look_for("nurse", QColor("#22aa66"))
+    assert look["hair"] != character.DEFAULT_LOOK["hair"]
+
+
+def _settle(c, state, level=0.0, seconds=1.5):
+    c.set_state(state)
+    c.level = level
+    for _ in range(int(seconds * 60)):
+        c.level = level
+        c.advance(1 / 60)
+    return c
+
+
+def test_mouth_follows_the_voice():
+    from genesis_desktop.ui.character import Character
+    c = Character()
+    _settle(c, "speaking", 0.6)
+    loud = c.mouth
+    _settle(c, "speaking", 0.0)
+    quiet = c.mouth
+    assert loud > 0.5 and quiet < 0.08 and loud > quiet
+    _settle(c, "listening", 0.6)
+    assert c.mouth < 0.05          # a listening face does not flap its mouth
+
+
+def test_pose_and_eyes_say_what_it_is_doing():
+    from genesis_desktop.ui.character import Character
+    c = Character()
+    _settle(c, "listening")
+    listening_eyes = c.eye_open
+    _settle(c, "hearing")
+    assert c.eye_open > listening_eyes          # opens up when it hears you
+    assert c.pitch > 0                          # leaning in
+    _settle(c, "thinking")
+    assert c.pitch < 0                          # glancing up
+    assert c.brow_skew > 0.5                    # one brow up: pondering, not angry
+    _settle(c, "muted")
+    assert c.eye_open < 0.3                     # eyes shut
