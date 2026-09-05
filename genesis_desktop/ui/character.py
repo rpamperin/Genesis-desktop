@@ -44,10 +44,10 @@ DEFAULT_LOOK = {
 
 LOOKS = {
     "alfred": {
-        "skin": "#e9bf9c", "skin_shadow": "#b0805a", "hair": "#9b9da4",
+        "skin": "#e9bf9c", "skin_shadow": "#b0805a", "hair": "#8d8f96",
         "eye": "#41607f", "brow": "#8a8c92", "lip": "#a97a72",
-        "hair_style": "bald", "brow_weight": 0.95, "eye_size": 0.90,
-        "accessory": "bowtie", "jaw": 1.06, "age": 0.7,
+        "hair_style": "receding", "brow_weight": 0.95, "eye_size": 0.90,
+        "accessory": "bowtie", "jaw": 1.06, "age": 0.55,
         "lip_fullness": 0.85, "blush": 0.18, "nose": 1.08,
     },
     "yui": {
@@ -507,7 +507,7 @@ class Character:
     HAIRLINES = {
         # (temple height, centre height) as multiples of r above centre
         "short": (0.30, 0.52),
-        "receding": (0.62, 0.44),
+        "receding": (0.60, 0.54),
         "long": (0.12, 0.52),
         "bald": (-0.30, -0.55),      # only a horseshoe low on the sides
     }
@@ -580,16 +580,17 @@ class Character:
         p.save()
         p.setClipPath(path)
         # strands, so it is not a flat cap
-        pen = QPen(_alpha(hair.darker(135), 0.42))
-        pen.setWidthF(max(0.8, r * 0.012))
+        # a few soft strands. Strong evenly-spaced lines read as a knitted
+        # cap, so these stay faint and unevenly spaced.
+        pen = QPen(_alpha(hair.darker(128), 0.16))
+        pen.setWidthF(max(0.7, r * 0.010))
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
-        for i in range(-6, 7):
-            u = i / 6.0
+        for u in (-0.82, -0.55, -0.24, 0.05, 0.34, 0.61, 0.86):
             sp = QPainterPath()
-            sp.moveTo(cx + u * r * 0.80, cy - r * 1.02)
-            sp.quadTo(cx + u * r * 1.02, cy - r * 0.55,
-                      cx + u * r * 0.94, cy + r * 0.05)
+            sp.moveTo(cx + u * r * 0.78, cy - r * 1.02)
+            sp.quadTo(cx + (u + 0.10) * r * 1.00, cy - r * 0.58,
+                      cx + (u + 0.06) * r * 0.92, cy + r * 0.05)
             p.drawPath(sp)
         p.setPen(Qt.NoPen)
         age = look.get("age", 0.0)

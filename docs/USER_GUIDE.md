@@ -74,8 +74,8 @@ launch the app.
 ## Reading the window
 
 In the middle is the assistant's face. Each one looks different — Alfred is
-a bald butler in a bow tie, Yui is bright-eyed, House is unshaven with heavy
-brows — and it tells you what is happening without your having to read
+a greying butler in a bow tie, Yui is bright-eyed, House is unshaven with
+heavy brows — and it tells you what is happening without your having to read
 anything.
 
 | What it does | What it means |

@@ -523,9 +523,9 @@ def test_expressions_are_distinct():
     assert c.smile > 0.2 and c.brow > 0.3
 
 
-def test_alfred_is_bald_and_house_is_not():
+def test_each_persona_keeps_its_own_hair():
     from genesis_desktop.ui import character
-    assert character.look_for("alfred")["hair_style"] == "bald"
+    assert character.look_for("alfred")["hair_style"] == "receding"
     assert character.look_for("house")["hair_style"] == "short"
     assert character.look_for("yui")["hair_style"] == "long"
 
@@ -538,7 +538,10 @@ def test_every_persona_renders_in_every_state():
     for name in ("alfred", "yui", "house", "someone-new"):
         c = Character()
         c.accent = QColor("#4fa3ff")
-        c.set_look(look_for(name, QColor("#22aa66")))
+        look = look_for(name, QColor("#22aa66"))
+        if name == "someone-new":
+            look["hair_style"] = "bald"      # the remaining style
+        c.set_look(look)
         for state in ("offline", "muted", "listening", "hearing", "thinking",
                       "tool", "confirm", "speaking"):
             _settle(c, state, 0.5, seconds=0.4)

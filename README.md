@@ -40,7 +40,7 @@ the backend; it only needs the backend's URL.
   gets its own face, built from a handful of numbers (skin, hair, brow
   weight, eye size, stubble, jaw, lip fullness) and tinted by the accent
   colour the backend gives it; there is no model file to download. Alfred is
-  a bald butler in a bow tie, Yui is bright-eyed, House is unshaven with
+  a greying butler in a bow tie, Yui is bright-eyed, House is unshaven with
   heavy brows. Abstract orb, bars and ring styles are still there in
   Settings.
 - **The mouth is not one ellipse.** Upper and lower lips are separate shapes
