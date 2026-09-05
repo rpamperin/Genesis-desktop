@@ -196,6 +196,32 @@ class SettingsWindow(QDialog):
         row.addWidget(self.conn_result, 1)
         lay.addLayout(row)
 
+        g = QGroupBox("Account (backends with per-person logins)")
+        gl = QVBoxLayout(g)
+        f3 = QFormLayout()
+        self.login_user = QLineEdit(config.get("account_user"))
+        self.login_pass = QLineEdit()
+        self.login_pass.setEchoMode(QLineEdit.Password)
+        f3.addRow("Username", self.login_user)
+        f3.addRow("Password", self.login_pass)
+        gl.addLayout(f3)
+        row = QHBoxLayout()
+        self.login_btn = QPushButton("Log in")
+        self.login_btn.clicked.connect(lambda: self.ctl.login(self.login_user.text().strip(), self.login_pass.text()))
+        self.logout_btn = QPushButton("Log out")
+        self.logout_btn.clicked.connect(self.ctl.logout)
+        self.login_status = QLabel("")
+        self.login_status.setObjectName("hint")
+        row.addWidget(self.login_btn)
+        row.addWidget(self.logout_btn)
+        row.addWidget(self.login_status, 1)
+        gl.addLayout(row)
+        gl.addWidget(_hint("Logging in gives you your own history and memory on a shared backend. "
+                           "Without it the shared API token is used and the user name above is taken at face value."))
+        self.ctl.account_changed.connect(self._on_account)
+        self._on_account(config.get("account_user") if config.get("account_token") else "")
+        lay.addWidget(g)
+
         g = QGroupBox("Run the backend from here")
         gl = QVBoxLayout(g)
         gl.addWidget(bound_check("autostart_backend", "Start the backend when this app starts (if it is not already reachable)"))
@@ -207,6 +233,12 @@ class SettingsWindow(QDialog):
         lay.addWidget(g)
         lay.addStretch(1)
         return page
+
+    def _on_account(self, user):
+        self.login_status.setText(f"✓ logged in as {user}" if user else "not logged in (shared token)")
+        self.logout_btn.setEnabled(bool(user))
+        if user:
+            self.login_pass.clear()
 
     def _dir_picker(self, key):
         w = QWidget()
@@ -261,16 +293,111 @@ class SettingsWindow(QDialog):
         g2 = QGroupBox("Voice per persona")
         self.voice_form = QFormLayout(g2)
         lay.addWidget(g2)
-        lay.addWidget(_hint("Piper voice names, downloaded on the Voice page. Leave blank to use the backend's choice."))
+        lay.addWidget(_hint("Piper voice names, downloaded on the Voice page. Leave blank to follow the backend: "
+                            "its voice if downloaded, otherwise a downloaded voice of the persona's gender."))
+
+        g3 = QGroupBox("Manage personas on the backend (admin token)")
+        g3l = QVBoxLayout(g3)
+        self.admin_personas = QTreeWidget()
+        self.admin_personas.setHeaderLabels(["", "persona", "kind", "voice", "model"])
+        self.admin_personas.setRootIsDecorated(False)
+        self.admin_personas.setMaximumHeight(160)
+        self.admin_personas.itemDoubleClicked.connect(lambda it, c: self._edit_persona())
+        g3l.addWidget(self.admin_personas)
+        row = QHBoxLayout()
+        b_new = QPushButton("New persona…")
+        b_new.clicked.connect(self._new_persona)
+        b_edit = QPushButton("Edit…")
+        b_edit.clicked.connect(self._edit_persona)
+        b_del = QPushButton("Delete")
+        b_del.setObjectName("danger")
+        b_del.clicked.connect(self._delete_persona)
+        self.persona_admin_status = QLabel("")
+        self.persona_admin_status.setObjectName("hint")
+        row.addWidget(b_new)
+        row.addWidget(b_edit)
+        row.addWidget(b_del)
+        row.addWidget(self.persona_admin_status, 1)
+        g3l.addLayout(row)
+        g3l.addWidget(_hint("Built-ins keep their name and prompt; their voice, greeting, avatar and colour can still be changed. "
+                            "Custom personas are yours entirely. Changes apply to every client of this backend."))
+        lay.addWidget(g3)
         lay.addStretch(1)
         page.refresh = self._refresh_personas
         return page
 
+    def _refresh_admin_personas(self):
+        self.persona_admin_status.setText("loading…")
+        a = _Async(self)
+
+        def done(res, err):
+            self.admin_personas.clear()
+            if err:
+                self.persona_admin_status.setText(f"✗ {err}")
+                return
+            self.persona_admin_status.setText("")
+            for p in res:
+                it = QTreeWidgetItem([p.get("avatar", ""), p.get("title") or p["name"],
+                                      "built-in" if p.get("builtin") else "custom",
+                                      p.get("voice", ""), p.get("model", "")])
+                it.setData(0, Qt.UserRole, p)
+                self.admin_personas.addTopLevelItem(it)
+            for i in range(5):
+                self.admin_personas.resizeColumnToContents(i)
+        a.done.connect(done)
+        a.run(self.ctl.client.admin_personas)
+
+    def _selected_admin_persona(self):
+        it = self.admin_personas.currentItem()
+        return it.data(0, Qt.UserRole) if it else None
+
+    def _persona_call(self, fn, ok_msg):
+        a = _Async(self)
+
+        def done(res, err):
+            if err:
+                QMessageBox.warning(self, "Backend refused", err)
+            else:
+                self.persona_admin_status.setText(ok_msg)
+                self.ctl.connect()
+                self._refresh_admin_personas()
+        a.done.connect(done)
+        a.run(fn)
+
+    def _new_persona(self):
+        from .persona_editor import PersonaEditor
+        dlg = PersonaEditor(None, self)
+        if dlg.exec() and dlg.result_data:
+            data = dlg.result_data
+            self._persona_call(lambda: self.ctl.client.admin_persona_create(data), f"✓ created {data['name']}")
+
+    def _edit_persona(self):
+        from .persona_editor import PersonaEditor
+        p = self._selected_admin_persona()
+        if not p:
+            return
+        dlg = PersonaEditor(p, self)
+        if dlg.exec() and dlg.result_data:
+            data = dlg.result_data
+            self._persona_call(lambda: self.ctl.client.admin_persona_update(p["name"], data), f"✓ updated {p['name']}")
+
+    def _delete_persona(self):
+        p = self._selected_admin_persona()
+        if not p:
+            return
+        if p.get("builtin"):
+            QMessageBox.information(self, "Built-in", "Built-in personas cannot be deleted.")
+            return
+        if QMessageBox.question(self, "Delete persona", f"Delete {p.get('title') or p['name']} from the backend?") != QMessageBox.Yes:
+            return
+        self._persona_call(lambda: self.ctl.client.admin_persona_delete(p["name"]), f"✓ deleted {p['name']}")
+
     def _refresh_personas(self):
+        self._refresh_admin_personas()
         self.persona_list.blockSignals(True)
         self.persona_list.clear()
         for p in self.ctl.personas or [{"name": config.get("persona"), "title": config.get("persona").title()}]:
-            it = QListWidgetItem(f"{p.get('title', p['name'])}   —   {', '.join(p.get('tags', []))}")
+            it = QListWidgetItem(f"{self.ctl.persona_display(p['name'])}   —   {', '.join(p.get('tags', []))}")
             it.setData(Qt.UserRole, p["name"])
             self.persona_list.addItem(it)
             if p["name"] == self.ctl.persona:
@@ -296,7 +423,8 @@ class SettingsWindow(QDialog):
                     cur.pop(name, None)
                 config.set("persona_voices", cur)
             c.currentTextChanged.connect(save)
-            self.voice_form.addRow(f"{p.get('title', p['name'])} (backend: {p.get('voice', '?')})", c)
+            self.voice_form.addRow(f"{self.ctl.persona_display(p['name'])} (backend: {p.get('voice', '?')}"
+                                   f"{', ' + p['voice_gender'] if p.get('voice_gender') else ''})", c)
 
     def _pick_persona(self, row, apply=True):
         it = self.persona_list.item(row)
@@ -305,8 +433,10 @@ class SettingsWindow(QDialog):
         name = it.data(Qt.UserRole)
         info = next((p for p in self.ctl.personas if p["name"] == name), {})
         self.persona_info.setText(
-            f"model: {info.get('model', '?')} · temperature: {info.get('temperature', '?')} · "
-            f"backend tools: {'on' if info.get('tools') else 'off'} · greeting: {info.get('greeting', '')!r}")
+            f"model: {info.get('model', '?')} ({info.get('provider', '?')}) · temperature: {info.get('temperature', '?')} · "
+            f"backend tools: {'on' if info.get('tools') else 'off'} · voice: {info.get('voice', '?')} "
+            f"{info.get('voice_gender', '')} pitch {info.get('voice_pitch', 1.0)} speed {info.get('voice_rate', 1.0)}\n"
+            f"greeting: {info.get('greeting', '')!r}")
         if apply and name != self.ctl.persona:
             self.ctl.set_persona(name)
 
@@ -683,6 +813,8 @@ class SettingsWindow(QDialog):
         lay.addWidget(bound_check("show_activity", "Show the activity panel at startup"))
         lay.addWidget(bound_check("always_on_top", "Keep the window above others"))
         lay.addWidget(bound_check("start_in_tray", "Start hidden in the system tray"))
+        lay.addWidget(bound_check("show_stats", "Show backend RAM/GPU and token counts while it works"))
+        lay.addWidget(bound_check("load_history", "Fill the chat panel from the backend's history"))
         lay.addWidget(bound_check("transcript_log", "Keep a transcript log in " + str(config.LOG_DIR)))
         lay.addStretch(1)
         return page

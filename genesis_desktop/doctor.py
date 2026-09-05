@@ -22,6 +22,12 @@ def report(ctl=None) -> str:
         row(True, "connection", f"{ctl.client.base_url}")
         row(bool(h.get("ok")), "model", f"{h.get('provider')} / {h.get('model')}: {h.get('detail', '')}")
         row(True, "personas", ", ".join(h.get("personas", [])))
+        ct = ctl.client_tools_support
+        row(ct is True, "client tools", "supported" if ct else (
+            "switched off on the backend (client_tools_enabled)" if ct is False
+            else "backend predates the client-tools protocol; Alfred cannot use this machine"))
+        if config.get("account_token"):
+            row(True, "account", config.get("account_user"))
         row(True, "auth", f"chat {'on' if h.get('chat_auth') else 'off'}, admin {'on' if h.get('admin_auth') else 'off'}")
         row(True, "backend voice", f"stt {ctl.voice_cfg.get('stt_engine', '?')}, tts {ctl.voice_cfg.get('tts_engine', '?')}")
     else:

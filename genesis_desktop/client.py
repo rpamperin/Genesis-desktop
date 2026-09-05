@@ -30,16 +30,30 @@ class GenesisClient:
     def base_url(self):
         return (self._base or config.get("backend_url")).rstrip("/")
 
-    def _headers(self, admin=False):
+    def _headers(self, admin=False, chat=False):
+        """Chat calls carry the admin token too when we have one: the
+        backend accepts it optionally there (maybe_admin) to unlock
+        admin-gated tools such as Yui's self-admin mod."""
         h = {}
+        acct = config.get("account_token")
         tok = self._api if self._api is not None else config.get("api_token")
-        if tok:
+        if acct:
+            h["X-Genesis-Token"] = acct
+        elif tok:
             h["X-Genesis-Token"] = tok
-        if admin:
+        if admin or chat:
             adm = self._admin if self._admin is not None else config.get("admin_token")
             if adm:
                 h["X-Genesis-Admin"] = adm
         return h
+
+    @staticmethod
+    def supports_client_tools(health: dict):
+        """True / False when the backend says, None when it predates the
+        client-tools protocol (and will silently ignore client_tools)."""
+        if not isinstance(health, dict) or "client_tools" not in health:
+            return None
+        return bool(health.get("client_tools"))
 
     def _client(self, timeout=None):
         return httpx.Client(
@@ -47,10 +61,10 @@ class GenesisClient:
             timeout=timeout or httpx.Timeout(config.get("connect_timeout"), read=30.0),
         )
 
-    def _req(self, method, path, admin=False, timeout=None, **kw):
+    def _req(self, method, path, admin=False, timeout=None, chat=False, **kw):
         try:
             with self._client(timeout) as c:
-                r = c.request(method, path, headers=self._headers(admin), **kw)
+                r = c.request(method, path, headers=self._headers(admin, chat), **kw)
         except httpx.HTTPError as e:
             raise BackendError(f"cannot reach {self.base_url}: {e}") from e
         if r.status_code >= 400:
@@ -74,6 +88,68 @@ class GenesisClient:
 
     def voice_config(self):
         return self._req("GET", "/voice/config")
+
+    # ------------------------------------------------------------------
+    # accounts (backends with per-account logins)
+    # ------------------------------------------------------------------
+    def login(self, username, password):
+        """-> (token, username). No token needed for this call."""
+        try:
+            with self._client() as c:
+                r = c.post("/auth/login", json={"username": username, "password": password})
+        except httpx.HTTPError as e:
+            raise BackendError(f"cannot reach {self.base_url}: {e}") from e
+        if r.status_code == 404:
+            raise BackendError("this backend has no account logins (older version)")
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail", r.text)
+            except ValueError:
+                detail = r.text
+            raise BackendError(f"login: {detail}")
+        d = r.json()
+        return d["token"], d.get("username", username)
+
+    def logout(self):
+        tok = config.get("account_token")
+        if not tok:
+            return
+        try:
+            with self._client() as c:
+                c.post("/auth/logout", headers={"X-Genesis-Token": tok})
+        except httpx.HTTPError:
+            pass
+
+    # ------------------------------------------------------------------
+    # conversations
+    # ------------------------------------------------------------------
+    def sessions(self, persona=None):
+        """[{session, user, persona, created, updated}] newest first."""
+        rows = self._req("GET", "/sessions", params={"user": config.get("user")}) or []
+        out = []
+        for r in rows:
+            key = r.get("session", "")
+            parts = key.split(":")
+            # store keys are user:persona:session
+            name = parts[2] if len(parts) >= 3 else key
+            p = r.get("persona") or (parts[1] if len(parts) >= 3 else "")
+            if persona and p != persona:
+                continue
+            out.append({"name": name, "persona": p, "updated": r.get("updated"), "key": key})
+        return out
+
+    def delete_session(self, persona, name):
+        return self._req("DELETE", f"/sessions/{persona}", params={
+            "session": name, "user": config.get("user")})
+
+    def search(self, q, persona=None, limit=50):
+        params = {"q": q, "user": config.get("user"), "limit": limit}
+        if persona:
+            params["persona"] = persona
+        return self._req("GET", "/search", params=params)
+
+    def agent_stats(self):
+        return self._req("GET", "/agent-stats")
 
     def history(self, persona, limit=100):
         return self._req("GET", f"/history/{persona}", params={
@@ -144,6 +220,25 @@ class GenesisClient:
     def admin_diagnostics(self):
         return self._req("GET", "/admin/diagnostics", admin=True)
 
+    def admin_personas(self):
+        return self._req("GET", "/admin/personas", admin=True)
+
+    def admin_persona_create(self, data: dict):
+        return self._req("POST", "/admin/personas", admin=True, json=data)
+
+    def admin_persona_update(self, name, data: dict):
+        return self._req("POST", f"/admin/personas/{name}", admin=True, json=data)
+
+    def admin_persona_delete(self, name):
+        return self._req("DELETE", f"/admin/personas/{name}", admin=True)
+
+    def admin_accounts(self):
+        return self._req("GET", "/admin/accounts", admin=True)
+
+    def admin_account_create(self, username, password):
+        return self._req("POST", "/admin/accounts", admin=True,
+                         json={"username": username, "password": password})
+
     def admin_reindex(self, persona=None, wipe=False):
         params = {"wipe": wipe}
         if persona:
@@ -175,7 +270,7 @@ class GenesisClient:
         try:
             with self._client(timeout) as c:
                 with c.stream("POST", f"/chat/{persona}", json=body,
-                              headers=self._headers()) as r:
+                              headers=self._headers(chat=True)) as r:
                     if r.status_code >= 400:
                         r.read()
                         try:

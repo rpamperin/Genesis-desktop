@@ -40,20 +40,30 @@ def _stop(m, personas):
     return {"action": "interrupt"}
 
 
-@rule(r"(switch|change|talk|speak|hand( me)? over|go) (to|with) (?P<name>[a-z]+)( please)?")
+def _resolve(spoken: str, personas):
+    """personas: names, or a {alias: name} mapping (aliases include spoken
+    titles such as "doctor house")."""
+    s = re.sub(r"[^a-z0-9 ]+", " ", spoken.lower()).strip()
+    if isinstance(personas, dict):
+        if s in personas:
+            return personas[s]
+        for alias, name in sorted(personas.items(), key=lambda kv: -len(kv[0])):
+            if s.endswith(alias) or s.startswith(alias):
+                return name
+        return None
+    return s if s in personas else None
+
+
+@rule(r"(switch|change|talk|speak|hand( me)? over|go) (to|with) (?P<name>[a-z. ]+?)( please)?")
 def _switch(m, personas):
-    name = m.group("name").lower()
-    if name in personas:
-        return {"action": "persona", "name": name}
-    return None
+    name = _resolve(m.group("name"), personas)
+    return {"action": "persona", "name": name} if name else None
 
 
-@rule(r"(?P<name>[a-z]+)[, ]+(are you|you) there")
+@rule(r"(?P<name>[a-z. ]+?)[, ]+(are you|you) there")
 def _there(m, personas):
-    name = m.group("name").lower()
-    if name in personas:
-        return {"action": "persona", "name": name, "say": "Yes, I'm here."}
-    return None
+    name = _resolve(m.group("name"), personas)
+    return {"action": "persona", "name": name, "say": "Yes, I'm here."} if name else None
 
 
 @rule(r"(mute|stop listening|go to sleep|sleep|mic off|microphone off|stop the mic)( please)?")
@@ -98,7 +108,8 @@ def _clear(m, personas):
 
 @rule(r"(what can you do|help|what do you do|what are your commands|list commands)")
 def _help(m, personas):
-    names = " or ".join(p.title() for p in personas) or "me"
+    names = sorted(set(personas.values())) if isinstance(personas, dict) else list(personas)
+    names = " or ".join(n.title() for n in names) or "me"
     return {"say": (
         f"Say my name, then ask. I can look at this computer, read and write "
         f"files, check services and logs, install packages, open things, and "

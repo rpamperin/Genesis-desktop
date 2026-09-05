@@ -33,11 +33,38 @@ LIGHT = {
 }
 
 
-def accent_for(persona: str) -> QColor:
+BACKEND_ACCENTS: dict = {}     # persona -> "#rrggbb" as the backend reports it
+
+
+def set_backend_accents(mapping: dict):
+    BACKEND_ACCENTS.clear()
+    for k, v in mapping.items():
+        if v and QColor(v).isValid():
+            BACKEND_ACCENTS[k] = v
+
+
+def accent_for(persona: str, theme: str = "dark") -> QColor:
+    """The backend's accent_color when it has one, lifted so it still
+    reads on a dark background (House's slate #4a5859 would vanish)."""
+    if persona in BACKEND_ACCENTS:
+        return readable(QColor(BACKEND_ACCENTS[persona]), theme)
     if persona in PERSONA_ACCENTS:
         return QColor(PERSONA_ACCENTS[persona])
     idx = sum(ord(c) for c in persona) % len(FALLBACK_ACCENTS)
     return QColor(FALLBACK_ACCENTS[idx])
+
+
+def readable(c: QColor, theme: str = "dark") -> QColor:
+    h, s, l, a = c.getHslF()
+    if theme == "dark":
+        l = max(l, 0.6)
+        s = max(s, 0.35)
+    else:
+        l = min(l, 0.5)
+        s = max(s, 0.35)
+    out = QColor()
+    out.setHslF(h if h >= 0 else 0.6, s, l, a)
+    return out
 
 
 def palette(theme: str) -> dict:

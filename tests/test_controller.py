@@ -148,3 +148,48 @@ def test_mod_answers_before_backend(app):
     pump(qt, 200)
     assert ctl.last_reply == "pong"
     mods.disable("example")
+
+
+def test_house_persona_display_voice_and_switch(app):
+    qt, ctl = app
+    assert [p["name"] for p in ctl.personas] == ["alfred", "yui", "house"]
+    assert ctl.persona_display("house") == "🩺 Dr. House"
+    assert ctl.client_tools_support is True
+    ctl.submit("switch to doctor house", voice=True)
+    assert ctl.persona == "house"
+    assert ctl.persona_style()["gender"] == "male" and ctl.persona_style()["pitch"] == 0.85
+    assert ctl.persona_voice() == "en_GB-alan-medium"     # male default, not the backend's Amy
+    from genesis_desktop.ui import theme
+    assert theme.accent_for("house").lightnessF() >= 0.55
+
+
+def test_backend_tool_start_and_usage(app):
+    qt, ctl = app
+    states, stats = [], []
+    ctl.state_changed.connect(states.append)
+    ctl.status.connect(lambda k, v: stats.append(v) if k == "stats" else None)
+    ctl.submit("what's the weather", voice=False)
+    assert wait_for(qt, lambda: "sunny" in ctl.last_reply)
+    assert "tool" in states and ctl.state == "listening"
+    assert any("tokens" in s for s in stats)
+
+
+def test_login_and_history_and_sessions(app):
+    qt, ctl = app
+    users, hist, sess = [], [], []
+    ctl.account_changed.connect(users.append)
+    ctl.history_loaded.connect(hist.append)
+    ctl.sessions_loaded.connect(sess.append)
+    ctl.login("ray", "secret")
+    assert wait_for(qt, lambda: "ray" in users and ctl.health and config.get("user") == "ray")
+    ctl.submit("hello", voice=False)
+    assert wait_for(qt, lambda: "hello" in ctl.last_reply)
+    ctl.set_session("second")
+    assert wait_for(qt, lambda: hist and hist[-1] == [])
+    ctl.set_session("desktop")
+    assert wait_for(qt, lambda: hist and [t["role"] for t in hist[-1]] == ["user", "assistant"])
+    assert wait_for(qt, lambda: sess and "desktop" in [r["name"] for r in sess[-1]])
+    ctl.logout()
+    assert wait_for(qt, lambda: users[-1] == "" and not config.get("account_token"))
+    config.reset("user")
+    config.reset("session")

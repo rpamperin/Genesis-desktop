@@ -1,8 +1,9 @@
 # Genesis Desktop
 
 A native desktop voice client for the [Genesis](https://github.com/rpamperin/Genesis)
-assistant backend. Talk to Alfred or Yui, watch the assistant react, and let
-Alfred look at and fix the computer you are sitting at.
+assistant backend. Talk to Alfred, Yui, Dr. House or any persona you add on
+the backend, watch the assistant react, and let Alfred look at and fix the
+computer you are sitting at.
 
 Built with Qt (PySide6). No browser, no Electron. Installed separately from
 the backend; it only needs the backend's URL.
@@ -46,6 +47,16 @@ the backend; it only needs the backend's URL.
 - **Local mods.** Drop a folder in `~/.config/genesis-desktop/mods/` to add
   tools, spoken commands and hooks that run in this app, independent of the
   backend's mods. Enable them in Settings.
+- **Personas come from the backend.** Whatever `GET /personas` returns is
+  what you get: name, title, avatar, accent colour, greeting, and voice
+  (gender, pitch, speed). "Switch to Doctor House" works by title as well
+  as by name, and "House, …" is a wake word. The Agent page can create,
+  edit and delete personas on the backend through its admin API.
+- **Accounts and conversations.** Log in to a backend with per-person
+  accounts (Settings › Connection) so your history and memory are your
+  own. The chat panel shows the backend's transcript and lets you pick,
+  start or delete conversations. Backend RAM/GPU and token counts show in
+  the status strip while it works.
 - **A separate settings window** with pages for Connection, Agent, Voice,
   Local tools, Local mods, Backend (the backend's own settings and mods,
   through its admin API), Appearance and Diagnostics.
@@ -86,7 +97,10 @@ prints what is installed and what is missing.
 
 The backend needs to be at least the version that includes client tools
 (`docs/CLIENT_TOOLS.md` in the Genesis repo). Older backends still chat and
-speak; Alfred just cannot touch this machine.
+speak; Alfred just cannot touch this machine, and the status strip says so.
+Backends with the newer persona/accounts API (House, avatars, logins,
+sessions, agent stats) are used in full; older ones simply lack those
+parts.
 
 ## Talking to it
 
@@ -95,7 +109,7 @@ speak; Alfred just cannot touch this machine.
 | "Alfred, why is the disk full" | a normal turn; Alfred may run `df`, read logs, and so on |
 | "Alfred" | "Yes?" and it listens without needing the name again |
 | "stop" / "never mind" | interrupt the reply |
-| "switch to Yui" | change persona (each keeps its own history) |
+| "switch to Yui", "switch to Doctor House" | change persona (each keeps its own history) |
 | "yes" / "no" / "always" | answer a tool approval |
 | "mute" / "wake up" | microphone off / on |
 | "show the chat", "open settings", "show the activity" | UI |
@@ -181,6 +195,10 @@ writes screenshots.
 - The backend does the thinking. This app never talks to a model directly.
 - The microphone is paused while it speaks unless barge-in is on; with
   barge-in, only the wake word interrupts, so it does not hear itself.
+- Voice per persona: the backend's voice if downloaded, otherwise a
+  downloaded Piper voice matching the persona's gender (House says male,
+  so he never gets Amy), otherwise a sensible default. Pitch and speed
+  apply on espeak-ng and Qt speech; Piper has no pitch knob.
 - Settings live in `~/.config/genesis-desktop/settings.json`; models and
   logs in `~/.local/share/genesis-desktop/`. Environment variables
   `GENESIS_DESKTOP_<KEY>` override any setting.

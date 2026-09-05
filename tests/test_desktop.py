@@ -249,7 +249,7 @@ def test_client_round_trip(backend, clean_config):
     config.set("admin_token", "admin-token", persist=False)
     c = client_mod.GenesisClient()
     assert c.health()["ok"] is True
-    assert [p["name"] for p in c.personas()] == ["alfred", "yui"]
+    assert [p["name"] for p in c.personas()] == ["alfred", "yui", "house"]
     events = list(c.turn("alfred", "hello"))
     assert events[0]["type"] == "start" and events[-1]["type"] == "done"
     assert "You said: hello" in events[-1]["text"]
@@ -341,3 +341,86 @@ def test_broken_hook_is_dropped_not_fatal():
     assert calls == [1]
     mods.HOOKS["after_reply"].remove(bad)
     mods._broken.discard("test-bad")
+
+
+# ----------------------------------------------------------------------
+# personas with titles, avatars, accents and voice styles (House & co)
+# ----------------------------------------------------------------------
+def test_title_aliases_and_wake_words(clean_config):
+    assert attention.title_aliases("Dr. House") == ["dr house", "doctor house", "house"]
+    assert attention.title_aliases("Alfred") == ["alfred"]
+    a = attention.Attention(["alfred", "yui", "house"], ["Alfred", "Yui", "Dr. House"])
+    assert set(a.wake_words()) == {"alfred", "yui", "house", "dr house", "doctor house", "genesis"}
+    assert a.check("Doctor House, my head hurts") == (True, "my head hurts", False)
+    assert a.check("hey house") == (True, "", True)
+
+
+def test_switch_command_understands_titles():
+    aliases = {"alfred": "alfred", "house": "house", "dr house": "house", "doctor house": "house"}
+    assert commands.match("switch to doctor house", aliases) == {"action": "persona", "name": "house"}
+    assert commands.match("talk to house please", aliases) == {"action": "persona", "name": "house"}
+    assert commands.match("switch to nobody", aliases) is None
+
+
+def test_resolve_voice_by_gender(clean_config, tmp_path):
+    config.set("piper_voice_dir", str(tmp_path))
+    house = {"voice": "en_US-amy-medium", "voice_gender": "male"}
+    # nothing downloaded: a sensible male default rather than Amy
+    assert tts.resolve_voice(house) == "en_GB-alan-medium"
+    (tmp_path / "en_US-ryan-high.onnx").write_bytes(b"x")
+    assert tts.resolve_voice(house) == "en_US-ryan-high"
+    (tmp_path / "en_US-amy-medium.onnx").write_bytes(b"x")
+    assert tts.resolve_voice({"voice": "en_US-amy-medium", "voice_gender": "female"}) == "en_US-amy-medium"
+    assert tts.resolve_voice(house) == "en_US-ryan-high"          # gender beats the backend's default
+    assert tts.resolve_voice(house, "en_GB-cori-high") == "en_GB-cori-high"   # override wins
+    config.reset("piper_voice_dir")
+
+
+def test_backend_accent_is_lifted_for_dark_theme():
+    from genesis_desktop.ui import theme
+    theme.set_backend_accents({"house": "#4a5859", "bad": "nope"})
+    c = theme.accent_for("house", "dark")
+    assert c.lightnessF() >= 0.55
+    assert theme.accent_for("alfred", "dark").name() == "#4fa3ff"
+    assert "bad" not in theme.BACKEND_ACCENTS
+    theme.set_backend_accents({})
+
+
+def test_client_tools_support_detection():
+    C = client_mod.GenesisClient
+    assert C.supports_client_tools({"client_tools": True}) is True
+    assert C.supports_client_tools({"client_tools": False}) is False
+    assert C.supports_client_tools({"ok": True}) is None
+
+
+def test_login_sessions_and_persona_admin(backend, clean_config):
+    config.set("backend_url", backend, persist=False)
+    config.set("api_token", "user-token", persist=False)
+    config.set("admin_token", "admin-token", persist=False)
+    c = client_mod.GenesisClient()
+    with pytest.raises(client_mod.BackendError):
+        c.login("ray", "wrong")
+    token, user = c.login("ray", "secret")
+    config.set("account_token", token, persist=False)
+    config.set("user", user, persist=False)
+    assert c._headers()["X-Genesis-Token"] == token
+    assert "X-Genesis-Admin" in c._headers(chat=True)
+    list(c.turn("house", "hello doctor"))
+    assert [r["name"] for r in c.sessions("house")] == ["desktop"]
+    assert [t["role"] for t in c.history("house")] == ["user", "assistant"]
+    c.delete_session("house", "desktop")
+    assert c.sessions("house") == []
+    # persona admin
+    names = [p["name"] for p in c.admin_personas()]
+    assert "house" in names
+    p = c.admin_persona_create({"name": "nurse", "system": "You are a nurse.", "voice_gender": "female"})
+    assert p["name"] == "nurse" and not p["builtin"]
+    assert c.admin_persona_update("nurse", {"greeting": "Hello there"})["greeting"] == "Hello there"
+    with pytest.raises(client_mod.BackendError):
+        c.admin_persona_update("house", {"system": "no"})
+    with pytest.raises(client_mod.BackendError):
+        c.admin_persona_delete("house")
+    assert c.admin_persona_delete("nurse")["deleted"]
+    assert "nurse" not in [p["name"] for p in c.personas()]
+    c.logout()
+    config.set("account_token", "", persist=False)

@@ -32,7 +32,51 @@ PIPER_VOICES = [
     "en_GB-alan-medium", "en_GB-northern_english_male-medium", "en_GB-cori-high",
     "en_GB-jenny_dioco-medium", "en_US-amy-medium", "en_US-lessac-medium",
     "en_US-ryan-high", "en_US-libritts_r-medium", "en_US-joe-medium",
+    "en_US-hfc_male-medium", "en_US-hfc_female-medium", "en_US-kusal-medium",
 ]
+PIPER_VOICE_GENDER = {
+    "en_GB-alan-medium": "male", "en_GB-northern_english_male-medium": "male",
+    "en_GB-cori-high": "female", "en_GB-jenny_dioco-medium": "female",
+    "en_US-amy-medium": "female", "en_US-lessac-medium": "female",
+    "en_US-ryan-high": "male", "en_US-libritts_r-medium": "male",
+    "en_US-joe-medium": "male", "en_US-hfc_male-medium": "male",
+    "en_US-hfc_female-medium": "female", "en_US-kusal-medium": "male",
+}
+DEFAULT_VOICE = {"male": "en_GB-alan-medium", "female": "en_US-amy-medium", "": "en_GB-alan-medium"}
+
+
+def downloaded_voices() -> list[str]:
+    d = config.piper_voice_dir()
+    if not d.exists():
+        return []
+    return sorted(p.name[:-5] for p in d.glob("*.onnx"))
+
+
+def resolve_voice(persona: dict, override: str = "") -> str:
+    """Which piper voice to use for a persona.
+
+    The override from Settings wins. Otherwise the backend's voice, if we
+    have it downloaded. Otherwise a downloaded voice of the persona's
+    voice_gender (House says male but the backend's default voice field is
+    a female one). Otherwise the backend's voice name, so the status bar
+    and the doctor can say exactly what to download.
+    """
+    if override:
+        return override
+    want = (persona or {}).get("voice") or ""
+    gender = (persona or {}).get("voice_gender") or ""
+    have = downloaded_voices()
+    if want in have and (not gender or PIPER_VOICE_GENDER.get(want, gender) == gender):
+        return want
+    if gender:
+        for v in have:
+            if PIPER_VOICE_GENDER.get(v) == gender:
+                return v
+        if want not in have:
+            return DEFAULT_VOICE.get(gender, want or DEFAULT_VOICE[""])
+    if want in have:
+        return want
+    return have[0] if have and not want else (want or DEFAULT_VOICE[""])
 
 
 def piper_voice_paths(name: str):
@@ -124,7 +168,7 @@ def pick_engine(voice: str, backend_tts: str = "browser") -> tuple[Optional[str]
 # ----------------------------------------------------------------------
 # synthesis
 # ----------------------------------------------------------------------
-def synth_piper(text: str, voice: str, rate: float = 1.0) -> bytes:
+def synth_piper(text: str, voice: str, rate: float = 1.0, pitch: float = 1.0) -> bytes:
     onnx, _ = piper_voice_paths(voice)
     length_scale = 1.0 / max(0.3, rate)
     try:
@@ -160,14 +204,18 @@ def synth_piper(text: str, voice: str, rate: float = 1.0) -> bytes:
 _piper_cache: dict = {}
 
 
-def synth_espeak(text: str, voice: str = "en-gb", rate: float = 1.0) -> bytes:
+def synth_espeak(text: str, voice: str = "en-gb", rate: float = 1.0, pitch: float = 1.0,
+                 gender: str = "") -> bytes:
     exe = shutil.which("espeak-ng") or shutil.which("espeak")
     lang = "en-gb" if voice.startswith("en_GB") else "en-us"
+    if (gender or PIPER_VOICE_GENDER.get(voice, "")) == "female":
+        lang += "+f3"
     wpm = int(165 * rate)
+    p = int(max(0, min(99, 50 * pitch)))        # espeak pitch 0-99, 50 = normal
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         out = f.name
     try:
-        subprocess.run([exe, "-v", lang, "-s", str(wpm), "-w", out, text],
+        subprocess.run([exe, "-v", lang, "-s", str(wpm), "-p", str(p), "-w", out, text],
                        capture_output=True, timeout=60, check=True)
         return Path(out).read_bytes()
     finally:
@@ -267,16 +315,17 @@ class Speaker:
     def speaking(self):
         return self._speaking
 
-    def say(self, text: str, voice: str):
+    def say(self, text: str, voice: str, style: dict = None):
+        """style: {"pitch": float, "rate": float, "gender": str} from the persona."""
         if not text.strip():
             return
         for s in split_sentences(clean_for_speech(text)):
-            self._q.put((s, voice, self._gen))
+            self._q.put((s, voice, self._gen, style or {}))
 
-    def say_sentence(self, sentence: str, voice: str):
+    def say_sentence(self, sentence: str, voice: str, style: dict = None):
         s = clean_for_speech(sentence)
         if s:
-            self._q.put((s, voice, self._gen))
+            self._q.put((s, voice, self._gen, style or {}))
 
     def stop(self):
         """Drop everything queued and cut the current sentence."""
@@ -303,12 +352,12 @@ class Speaker:
             item = self._q.get()
             if item is None:
                 return
-            text, voice, gen = item
+            text, voice, gen, style = item
             if gen != self._gen:
                 continue
             wav = None
             try:
-                wav = self._synth(text, voice)
+                wav = self._synth(text, voice, style)
             except Exception as e:
                 if self.on_error:
                     self.on_error(f"tts: {e}")
@@ -322,7 +371,7 @@ class Speaker:
                 if wav:
                     self.player.play(wav)
                 elif self.engine == "qt":
-                    self._speak_qt(text)
+                    self._speak_qt(text, style)
             except Exception as e:
                 if self.on_error:
                     self.on_error(f"playback: {e}")
@@ -335,25 +384,28 @@ class Speaker:
             if self.on_speaking:
                 self.on_speaking(v)
 
-    def _synth(self, text, voice) -> Optional[bytes]:
-        rate = config.get("tts_rate")
+    def _synth(self, text, voice, style=None) -> Optional[bytes]:
+        style = style or {}
+        rate = config.get("tts_rate") * float(style.get("rate") or 1.0)
+        pitch = float(style.get("pitch") or 1.0)
         if self.engine == "piper":
-            return synth_piper(text, voice, rate)
+            return synth_piper(text, voice, rate, pitch)
         if self.engine == "backend":
-            return self.client.speak(text, voice_persona(voice))
+            return self.client.speak(text, style.get("persona") or voice_persona(voice))
         if self.engine == "espeak":
-            return synth_espeak(text, voice, rate)
+            return synth_espeak(text, voice, rate, pitch, style.get("gender", ""))
         if self.engine == "qt":
             return None
         raise RuntimeError(self.engine_note or "no tts engine")
 
-    def _speak_qt(self, text):
+    def _speak_qt(self, text, style=None):
         from PySide6.QtTextToSpeech import QTextToSpeech
-        from PySide6.QtCore import QEventLoop, QTimer
+        style = style or {}
         if self._qt is None:
             self._qt = QTextToSpeech()
         tts = self._qt
-        tts.setRate(config.get("tts_rate") - 1.0)
+        tts.setRate(config.get("tts_rate") * float(style.get("rate") or 1.0) - 1.0)
+        tts.setPitch(max(-1.0, min(1.0, float(style.get("pitch") or 1.0) - 1.0)))
         done = threading.Event()
         def _state(st):
             if st in (QTextToSpeech.State.Ready, QTextToSpeech.State.Error):

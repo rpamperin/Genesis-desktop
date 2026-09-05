@@ -94,6 +94,14 @@ def run():
         ctl.bridge.utterance.emit("hello again")            # inside window
         pump(1500)
         assert "hello again" in ctl.last_reply, ctl.last_reply
+        ctl.submit("switch to doctor house", voice=True)
+        pump(400)
+        assert ctl.persona == "house", ctl.persona
+        app.window.visual.set_state("speaking")
+        for i in range(20):
+            app.window.visual.set_level(0.08 + 0.05 * (i % 4))
+            pump(16)
+        shot("03b-house")
         for style in ("orb", "bars", "ring"):
             app.window.visual.set_style(style)
             app.window.visual.set_state("speaking")

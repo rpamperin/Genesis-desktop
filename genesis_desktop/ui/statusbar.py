@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QStatusBar
 
-ORDER = ["backend", "agent", "mode", "mic", "stt", "tts", "tool"]
-PREFIX = {"backend": "⚙ ", "agent": "◉ ", "mode": "◎ ", "mic": "🎙 ", "stt": "👂 ",
-          "tts": "🔊 ", "tool": "⚡ "}
+ORDER = ["backend", "user", "agent", "mode", "mic", "stt", "tts", "tool", "stats"]
+PREFIX = {"backend": "⚙ ", "user": "👤 ", "agent": "◉ ", "mode": "◎ ", "mic": "🎙 ", "stt": "👂 ",
+          "tts": "🔊 ", "tool": "⚡ ", "stats": "📈 "}
 
 
 class StatusStrip(QStatusBar):

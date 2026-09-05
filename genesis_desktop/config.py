@@ -30,6 +30,8 @@ DEFAULTS = {
     "backend_url": "http://127.0.0.1:8080",
     "api_token": "",
     "admin_token": "",
+    "account_user": "",               # optional per-account login (POST /auth/login)
+    "account_token": "",              # its session token; beats api_token when set
     "connect_timeout": 5,
     "autostart_backend": False,       # run the backend from this app
     "backend_command": "python -m genesis serve",
@@ -87,12 +89,16 @@ DEFAULTS = {
     "always_on_top": False,
     "window_opacity": 1.0,
     "transcript_log": True,
+    "show_stats": True,               # RAM/GPU/tokens pill while a turn runs
+    "load_history": True,             # fill the chat panel from the backend's history
 }
 
 SCHEMA = {
     "backend_url":        {"type": str},
     "api_token":          {"type": str, "secret": True},
     "admin_token":        {"type": str, "secret": True},
+    "account_user":       {"type": str},
+    "account_token":      {"type": str, "secret": True},
     "connect_timeout":    {"type": int, "min": 1, "max": 60},
     "autostart_backend":  {"type": bool},
     "backend_command":    {"type": str},
@@ -136,6 +142,8 @@ SCHEMA = {
     "always_on_top":      {"type": bool},
     "window_opacity":     {"type": float, "min": 0.3, "max": 1.0},
     "transcript_log":     {"type": bool},
+    "show_stats":         {"type": bool},
+    "load_history":       {"type": bool},
 }
 
 _lock = threading.RLock()

@@ -14,13 +14,36 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PERSONAS = [
-    {"name": "alfred", "title": "Alfred", "voice": "en_GB-alan-medium", "greeting": "Ready.",
-     "tags": ["technical"], "model": "fake", "temperature": 0.2, "tools": False},
-    {"name": "yui", "title": "Yui", "voice": "en_US-amy-medium", "greeting": "Hi!",
-     "tags": ["office"], "model": "fake", "temperature": 0.7, "tools": False},
+    {"name": "alfred", "title": "Alfred", "voice": "en_GB-alan-medium", "greeting": "At your service.",
+     "tags": ["technical"], "model": "fake", "temperature": 0.2, "tools": False, "provider": "fake",
+     "voice_gender": "male", "voice_pitch": 0.8, "voice_rate": 1.0, "avatar": "🎩",
+     "accent_color": "#2c3e50", "builtin": True, "system": "You are Alfred."},
+    {"name": "yui", "title": "Yui", "voice": "en_US-amy-medium", "greeting": "Hi hi!",
+     "tags": ["office"], "model": "fake", "temperature": 0.7, "tools": False, "provider": "fake",
+     "voice_gender": "female", "voice_pitch": 1.35, "voice_rate": 1.15, "avatar": "🌟",
+     "accent_color": "#ff6b81", "builtin": True, "system": "You are Yui."},
+    {"name": "house", "title": "Dr. House", "voice": "en_US-amy-medium",
+     "greeting": "Everybody lies. So, what are you lying about?", "tags": ["medical"], "model": "fake",
+     "temperature": 0.6, "tools": False, "provider": "fake", "voice_gender": "male", "voice_pitch": 0.85,
+     "voice_rate": 1.05, "avatar": "🩺", "accent_color": "#4a5859", "builtin": True,
+     "system": "You are Dr. House."},
 ]
+CHAT_FIELDS = ("name", "title", "temperature", "model", "provider", "tools", "voice", "voice_gender",
+               "voice_pitch", "voice_rate", "greeting", "tags", "avatar", "accent_color")
+ACCOUNTS = {"ray": "secret"}
+SESSIONS = {}      # token -> username
+CONVERSATIONS = {}  # "user:persona:session" -> [turns]
 PENDING = {}
 SEEN = []          # every request body, for assertions
+
+
+def _chat_view(p):
+    return {k: p.get(k) for k in CHAT_FIELDS}
+
+
+def _user_for(handler):
+    tok = handler.headers.get("X-Genesis-Token")
+    return SESSIONS.get(tok)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -46,25 +69,49 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"detail": "missing X-Genesis-Admin"})
                 return False
             return True
-        if self.token and self.headers.get("X-Genesis-Token") != self.token:
+        supplied = self.headers.get("X-Genesis-Token")
+        if supplied in SESSIONS:
+            return True                       # a per-account session token
+        if self.token and supplied != self.token:
             self._json(401, {"detail": "missing X-Genesis-Token"})
             return False
         return True
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        qs = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[1].split("&") if "=" in kv) \
+            if "?" in self.path else {}
+        from urllib.parse import unquote_plus
+        qs = {k: unquote_plus(v) for k, v in qs.items()}
         if path == "/health":
             return self._json(200, {"ok": True, "detail": "ok", "provider": "fake", "model": "fake-model",
-                                    "personas": ["alfred", "yui"], "chat_auth": bool(self.token),
-                                    "admin_auth": bool(self.admin)})
+                                    "personas": [p["name"] for p in PERSONAS], "chat_auth": bool(self.token),
+                                    "admin_auth": bool(self.admin), "client_tools": True})
         if not self._auth(path.startswith("/admin")):
             return
         if path == "/personas":
+            return self._json(200, [_chat_view(p) for p in PERSONAS])
+        if path == "/admin/personas":
             return self._json(200, PERSONAS)
         if path == "/voice/config":
             return self._json(200, {"stt_engine": "browser", "tts_engine": "browser",
-                                    "voices": {p["name"]: p["voice"] for p in PERSONAS}})
+                                    "voices": {p["name"]: {"voice": p["voice"], "gender": p["voice_gender"],
+                                                           "pitch": p["voice_pitch"], "rate": p["voice_rate"]}
+                                               for p in PERSONAS}})
         if path.startswith("/history/"):
+            persona = path.rsplit("/", 1)[1]
+            user = _user_for(self) or qs.get("user", "local")
+            key = f"{user}:{persona}:{qs.get('session', 'default')}"
+            return self._json(200, CONVERSATIONS.get(key, []))
+        if path == "/sessions":
+            user = _user_for(self) or qs.get("user")
+            rows = [{"session": k, "user": k.split(":")[0], "persona": k.split(":")[1], "updated": i}
+                    for i, k in enumerate(CONVERSATIONS) if not user or k.startswith(user + ":")]
+            return self._json(200, rows)
+        if path == "/agent-stats":
+            return self._json(200, {"memory": {"used_gb": 5.2, "total_gb": 16.0, "percent": 33},
+                                    "gpu": {"used_gb": 3.1, "total_gb": 8.0}})
+        if path == "/search":
             return self._json(200, [])
         if path == "/admin/settings":
             return self._json(200, {k: {"value": v, "default": v, "source": "default",
@@ -75,8 +122,21 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"detail": "no"})
 
     def do_DELETE(self):
-        if not self._auth():
+        path = self.path.split("?")[0]
+        if not self._auth(path.startswith("/admin")):
             return
+        if path.startswith("/admin/personas/"):
+            name = path.rsplit("/", 1)[1]
+            p = next((x for x in PERSONAS if x["name"] == name), None)
+            if not p:
+                return self._json(404, {"detail": f"no persona {name!r}"})
+            if p.get("builtin"):
+                return self._json(400, {"detail": "builtin personas cannot be deleted"})
+            PERSONAS.remove(p)
+            return self._json(200, {"name": name, "deleted": True})
+        if path.startswith("/sessions/"):
+            for k in [k for k in CONVERSATIONS if k.endswith(":" + self.path.split("session=")[-1].split("&")[0])]:
+                CONVERSATIONS.pop(k, None)
         self._json(200, {"ok": True})
 
     def do_POST(self):
@@ -84,8 +144,33 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         SEEN.append((path, body))
+        if path == "/auth/login":
+            if ACCOUNTS.get(body.get("username", "").lower()) == body.get("password"):
+                tok = f"sess-{body['username'].lower()}"
+                SESSIONS[tok] = body["username"].lower()
+                return self._json(200, {"token": tok, "username": body["username"].lower()})
+            return self._json(401, {"detail": "bad username or password"})
+        if path == "/auth/logout":
+            SESSIONS.pop(self.headers.get("X-Genesis-Token"), None)
+            return self._json(200, {"ok": True})
         if not self._auth(path.startswith("/admin")):
             return
+        if path == "/admin/personas":
+            if any(p["name"] == body.get("name") for p in PERSONAS):
+                return self._json(400, {"detail": "persona exists"})
+            p = {"builtin": False, "model": "fake", "provider": "fake", **body}
+            p.setdefault("title", p["name"].title())
+            PERSONAS.append(p)
+            return self._json(200, p)
+        if path.startswith("/admin/personas/") and not path.endswith("/mods"):
+            name = path.rsplit("/", 1)[1]
+            p = next((x for x in PERSONAS if x["name"] == name), None)
+            if not p:
+                return self._json(404, {"detail": f"no persona {name!r}"})
+            if p.get("builtin") and ("system" in body or "title" in body):
+                return self._json(400, {"detail": "builtin identity is fixed"})
+            p.update(body)
+            return self._json(200, p)
         if path.startswith("/admin/settings/"):
             key = path.rsplit("/", 1)[1]
             if key == "temperature" and float(body["value"]) > 2:
@@ -102,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(409, {"detail": "tts_engine is 'browser'"})
         if path.startswith("/chat/"):
             persona = path.rsplit("/", 1)[1]
-            if persona not in ("alfred", "yui"):
+            if persona not in [p["name"] for p in PERSONAS]:
                 return self._json(404, {"detail": f"no persona {persona!r}"})
             return self._chat(persona, body)
         return self._json(404, {"detail": "no"})
@@ -117,9 +202,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(o)}\n\n".encode())
             self.wfile.flush()
 
-        ev({"type": "start", "persona": persona, "model": "fake-model"})
+        ev({"type": "start", "persona": persona, "model": "fake-model", "provider": "fake"})
         text = body.get("text", "")
         session = body.get("session", "default")
+        user = _user_for(self) or body.get("user", "local")
+        convo = CONVERSATIONS.setdefault(f"{user}:{persona}:{session}", [])
+        if text:
+            convo.append({"role": "user", "content": text, "interrupted": 0})
         results = body.get("tool_results")
         tools = {t["function"]["name"] for t in body.get("client_tools") or []}
         if results:
@@ -135,6 +224,10 @@ class Handler(BaseHTTPRequestHandler):
         elif "fail" in text:
             ev({"type": "error", "message": "model exploded"})
             reply = ""
+        elif "weather" in text:
+            ev({"type": "tool_start", "name": "get_weather", "args": {"place": "here"}})
+            ev({"type": "tool", "name": "get_weather", "args": {"place": "here"}, "result": "sunny"})
+            reply = "It is sunny here."
         elif "disk" in text and "run_command" in tools:
             call = {"id": "call-1", "name": "run_command", "args": {"command": "df -h"}}
             PENDING[session] = call
@@ -154,7 +247,10 @@ class Handler(BaseHTTPRequestHandler):
             reply = f"You said: {text}. That is all there is to it! Anything else?"
         for word in reply.split(" "):
             ev({"type": "delta", "text": word + " "})
-        ev({"type": "done", "text": reply, "sources": [], "interrupted": False, "pending_tools": []})
+        if reply:
+            convo.append({"role": "assistant", "content": reply, "interrupted": 0})
+        ev({"type": "done", "text": reply, "sources": [], "interrupted": False, "pending_tools": [],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19} if reply else None})
         self.wfile.write(b"data: [DONE]\n\n")
 
 

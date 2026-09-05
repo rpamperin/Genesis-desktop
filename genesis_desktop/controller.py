@@ -22,11 +22,12 @@ import traceback
 from collections import deque
 from typing import Optional
 
-from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 
 from . import client as client_mod
 from . import commands, config, mods, tools
 from .tools import policy
+from .ui import theme
 from .voice import attention as attention_mod
 from .voice import audio, stt, tts
 
@@ -55,6 +56,10 @@ class Bridge(QObject):
     connected = Signal(dict)
     connect_failed = Signal(str)
     worker_error = Signal(str)
+    stats = Signal(dict)
+    sessions = Signal(list)
+    history = Signal(list)
+    logged_in = Signal(str)
 
 
 class Controller(QObject):
@@ -74,6 +79,9 @@ class Controller(QObject):
     error = Signal(str)
     ui_request = Signal(str, object)      # "chat"/"activity"/"settings"/"show" + value
     backend_health = Signal(dict)
+    sessions_loaded = Signal(list)        # [{name, persona, updated}]
+    history_loaded = Signal(list)         # [{role, content, ...}] oldest first
+    account_changed = Signal(str)         # username or ""
 
     def __init__(self):
         super().__init__()
@@ -105,6 +113,11 @@ class Controller(QObject):
         self.speaker.on_speaking = lambda v: self.bridge.speaking.emit(v)
         self.speaker.on_sentence = lambda s: self.bridge.spoken.emit(s)
         self.speaker.on_error = lambda m: self.bridge.worker_error.emit(m)
+        self.client_tools_support = None      # None: backend predates the protocol
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setInterval(2000)
+        self._stats_timer.timeout.connect(self._poll_stats)
+        self._stats_ok = True
 
         b = self.bridge
         b.utterance.connect(self._on_utterance, Qt.QueuedConnection)
@@ -118,6 +131,10 @@ class Controller(QObject):
         b.connected.connect(self._on_connected, Qt.QueuedConnection)
         b.connect_failed.connect(self._on_connect_failed, Qt.QueuedConnection)
         b.worker_error.connect(self._on_worker_error, Qt.QueuedConnection)
+        b.stats.connect(self._on_stats, Qt.QueuedConnection)
+        b.sessions.connect(self.sessions_loaded, Qt.QueuedConnection)
+        b.history.connect(self.history_loaded, Qt.QueuedConnection)
+        b.logged_in.connect(self._on_logged_in, Qt.QueuedConnection)
 
         config.watch("*", self._on_config_changed)
 
@@ -132,7 +149,7 @@ class Controller(QObject):
         if config.get("transcript_log"):
             self._log_file = config.LOG_DIR / f"transcript-{datetime.date.today()}.log"
         self.status.emit("mode", self._mode_label())
-        self.status.emit("agent", self.persona.title())
+        self.status.emit("agent", self.persona_display())
         self.connect()
         self.listener.start()
         self._start_mic()
@@ -152,7 +169,16 @@ class Controller(QObject):
     def _connect_worker(self):
         try:
             health = self.client.health()
-            personas = self.client.personas()
+            try:
+                personas = self.client.personas()
+            except client_mod.BackendError as e:
+                if config.get("account_token") and (" 401 " in str(e) or " 403 " in str(e)):
+                    # the account session expired; fall back to the shared token
+                    config.set("account_token", "")
+                    self.bridge.worker_error.emit("your account login expired; using the shared token")
+                    personas = self.client.personas()
+                else:
+                    raise
             try:
                 vc = self.client.voice_config()
             except client_mod.BackendError:
@@ -169,17 +195,30 @@ class Controller(QObject):
         self.personas = info["personas"]
         self.voice_cfg = info["voice"]
         names = [p["name"] for p in self.personas]
-        self.attention.set_personas(names)
+        self.attention.set_personas(names, [p.get("title", "") for p in self.personas])
+        theme.set_backend_accents({p["name"]: p.get("accent_color", "") for p in self.personas})
         for p in self.personas:
             tts.register_persona_voice(p["name"], p.get("voice", ""))
         if self.persona not in names and names:
             self.persona = names[0]
+        self.client_tools_support = client_mod.GenesisClient.supports_client_tools(self.health)
         self.personas_loaded.emit(self.personas)
         self.backend_health.emit(self.health)
         h = self.health
         self.status.emit("backend", f"{h.get('provider', '?')} · {h.get('model', '?')}"
                          + ("" if h.get("ok") else " · model unreachable"))
+        if self.client_tools_support is None:
+            self.status.emit("tool", "backend has no client tools")
+            self._log("system", "this backend predates client tools; local tools are unavailable to the model")
+        elif not self.client_tools_support:
+            self.status.emit("tool", "client tools off on backend")
+        else:
+            self.status.emit("tool", "")
+        self.account_changed.emit(config.get("account_user") if config.get("account_token") else "")
+        self.status.emit("agent", self.persona_display())
         self._configure_speech()
+        self.refresh_sessions()
+        self.load_history()
         self._set_state(State.MUTED if self.muted else State.LISTENING)
         self._log("system", f"connected to {self.client.base_url}")
         if config.get("greet_on_start") and not getattr(self, "_greeted", False):
@@ -199,6 +238,117 @@ class Controller(QObject):
         eng, note = self.speaker.configure(voice, self.voice_cfg.get("tts_engine", "browser"))
         self.status.emit("tts", f"{eng} · {voice}" if eng else f"no speech: {note}")
         self.listener.reconfigure()
+
+    # ------------------------------------------------------------------
+    # accounts
+    # ------------------------------------------------------------------
+    def login(self, username: str, password: str):
+        def worker():
+            try:
+                token, user = self.client.login(username, password)
+                config.set("account_token", token, persist=False)
+                config.set("account_user", user)
+                config.set("account_token", token)
+                config.set("user", user)
+                self.bridge.logged_in.emit(user)
+            except client_mod.BackendError as e:
+                self.bridge.worker_error.emit(str(e))
+        threading.Thread(target=worker, daemon=True, name="login").start()
+
+    def logout(self):
+        threading.Thread(target=self.client.logout, daemon=True).start()
+        config.set("account_token", "")
+        config.set("account_user", "")
+        self.account_changed.emit("")
+        self.connect()
+
+    @Slot(str)
+    def _on_logged_in(self, user):
+        self._log("system", f"logged in as {user}")
+        self.account_changed.emit(user)
+        self.connect()
+
+    # ------------------------------------------------------------------
+    # conversations
+    # ------------------------------------------------------------------
+    def refresh_sessions(self):
+        def worker():
+            try:
+                self.bridge.sessions.emit(self.client.sessions(self.persona))
+            except client_mod.BackendError:
+                self.bridge.sessions.emit([])
+        threading.Thread(target=worker, daemon=True).start()
+
+    def load_history(self):
+        if not config.get("load_history"):
+            return
+        persona = self.persona
+
+        def worker():
+            try:
+                rows = self.client.history(persona, limit=60) or []
+                self.bridge.history.emit(rows)
+            except client_mod.BackendError:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def set_session(self, name: str):
+        name = (name or "").strip() or "default"
+        if name == config.get("session"):
+            return
+        self.interrupt()
+        config.set("session", name)
+        self._log("system", f"conversation: {name}")
+        self.load_history()
+        self.refresh_sessions()
+
+    def new_session(self):
+        self.set_session(datetime.datetime.now().strftime("%Y-%m-%d %H.%M"))
+
+    def delete_session(self, name: str):
+        def worker():
+            try:
+                self.client.delete_session(self.persona, name)
+            except client_mod.BackendError as e:
+                self.bridge.worker_error.emit(str(e))
+            self.bridge.sessions.emit(self.client.sessions(self.persona))
+        threading.Thread(target=worker, daemon=True).start()
+        if name == config.get("session"):
+            config.set("session", "default")
+            self.load_history()
+
+    # ------------------------------------------------------------------
+    # agent stats while a turn runs
+    # ------------------------------------------------------------------
+    def _poll_stats(self):
+        if not (config.get("show_stats") and self._stats_ok and self.health):
+            return
+
+        def worker():
+            try:
+                self.bridge.stats.emit(self.client.agent_stats() or {})
+            except client_mod.BackendError as e:
+                if " 404 " in str(e):
+                    self._stats_ok = False
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(dict)
+    def _on_stats(self, d):
+        parts = []
+        mem = d.get("memory") or {}
+        if isinstance(mem, dict) and mem.get("used_gb") is not None:
+            parts.append(f"ram {mem.get('used_gb')}/{mem.get('total_gb')} GB")
+        elif isinstance(mem, dict) and mem.get("percent") is not None:
+            parts.append(f"ram {mem['percent']}%")
+        gpu = d.get("gpu") or {}
+        if isinstance(gpu, dict) and gpu.get("used_gb") is not None:
+            parts.append(f"gpu {gpu.get('used_gb')}/{gpu.get('total_gb')} GB")
+        elif isinstance(gpu, list) and gpu:
+            g = gpu[0]
+            if isinstance(g, dict) and g.get("used_gb") is not None:
+                parts.append(f"gpu {g.get('used_gb')}/{g.get('total_gb')} GB")
+        if parts:
+            self.status.emit("stats", " · ".join(parts))
 
     def _start_mic(self):
         if config.get("voice_mode") == "off":
@@ -222,7 +372,28 @@ class Controller(QObject):
 
     def persona_voice(self) -> str:
         override = config.get("persona_voices").get(self.persona)
-        return override or self._persona_info().get("voice") or "en_GB-alan-medium"
+        return tts.resolve_voice(self._persona_info(), override)
+
+    def persona_style(self) -> dict:
+        p = self._persona_info()
+        return {"pitch": p.get("voice_pitch") or 1.0, "rate": p.get("voice_rate") or 1.0,
+                "gender": p.get("voice_gender") or "", "persona": self.persona}
+
+    def persona_display(self, name=None) -> str:
+        p = self._persona_info() if name in (None, self.persona) else \
+            next((x for x in self.personas if x["name"] == name), {"name": name})
+        title = p.get("title") or p["name"].title()
+        avatar = p.get("avatar") or ""
+        return f"{avatar} {title}".strip()
+
+    def persona_aliases(self) -> dict:
+        """spoken alias -> persona name, for the switch command."""
+        out = {}
+        for p in self.personas:
+            out[p["name"].lower()] = p["name"]
+            for a in attention_mod.title_aliases(p.get("title", "")):
+                out.setdefault(a, p["name"])
+        return out
 
     def set_persona(self, name: str, announce=True):
         names = [p["name"] for p in self.personas] or [name]
@@ -234,10 +405,12 @@ class Controller(QObject):
         self.interrupt()
         self.persona = name
         config.set("persona", name)
-        self.status.emit("agent", self._persona_info().get("title", name.title()))
+        self.status.emit("agent", self.persona_display())
         self.persona_changed.emit(name)
         self._configure_speech()
         self._log("system", f"switched to {name}")
+        self.refresh_sessions()
+        self.load_history()
         if announce:
             self.say(self._persona_info().get("greeting") or f"{name.title()} here.")
 
@@ -304,6 +477,12 @@ class Controller(QObject):
         self.state = s
         self.state_changed.emit(s)
         mods.run("on_state", s)
+        busy = s in (State.THINKING, State.TOOL)
+        if busy and not self._stats_timer.isActive():
+            self._stats_timer.start()
+            self._poll_stats()
+        elif not busy and self._stats_timer.isActive():
+            self._stats_timer.stop()
 
     def _idle_state(self):
         if not self.health:
@@ -390,7 +569,7 @@ class Controller(QObject):
             return
         self.partial_text.emit("")
         self.user_message.emit(text)
-        names = [p["name"] for p in self.personas]
+        names = self.persona_aliases() or [self.persona]
 
         out = commands.match(text, names)
         if out and not (out.get("action") == "confirm"):
@@ -486,7 +665,13 @@ class Controller(QObject):
             self.status.emit("backend", f"{self.health.get('provider', '?')} · {ev.get('model', '')}")
         elif t == "sources":
             self._log("sources", ", ".join(ev.get("sources", [])))
+        elif t == "tool_start":
+            self.status.emit("tool", f"backend: {ev.get('name')}")
+            self._set_state(State.TOOL)
         elif t == "tool":
+            if self.state == State.TOOL and not ev.get("client"):
+                self._set_state(State.THINKING)
+                self.status.emit("tool", "")
             where = "here" if ev.get("client") else "backend"
             self.activity.emit({"kind": "tool", "title": f"[{where}] {ev.get('name')}",
                                 "detail": f"{ev.get('args')}\n{ev.get('result', '')}",
@@ -511,6 +696,9 @@ class Controller(QObject):
                 self._speak_sentence(s)
             if ev.get("failed"):
                 self.say("Sorry, that didn't work. Check the activity panel.")
+            usage = ev.get("usage")
+            if isinstance(usage, dict) and usage.get("total_tokens"):
+                self.status.emit("stats", f"{usage.get('prompt_tokens', 0)} in · {usage.get('completion_tokens', 0)} out tokens")
             reply = self._reply
             self.last_reply = reply or self.last_reply
             self.assistant_done.emit(reply, ev)
@@ -529,12 +717,12 @@ class Controller(QObject):
 
     def _speak_sentence(self, s):
         if config.get("speak_replies") and self.speaker.engine:
-            self.speaker.say_sentence(s, self.persona_voice())
+            self.speaker.say_sentence(s, self.persona_voice(), self.persona_style())
 
     def say(self, text):
         self.spoken_sentence.emit(text)
         if config.get("speak_replies") and self.speaker.engine:
-            self.speaker.say(text, self.persona_voice())
+            self.speaker.say(text, self.persona_voice(), self.persona_style())
         else:
             self.attention.note_reply_finished()
 

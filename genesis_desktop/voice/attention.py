@@ -27,12 +27,28 @@ LEADERS = ("hey", "hi", "ok", "okay", "yo", "excuse me", "listen", "oi", "comput
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9' ]+", " ", s.lower()).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", s.lower())).strip()
+
+
+def title_aliases(title: str) -> list[str]:
+    t = _norm(title or "")
+    if not t:
+        return []
+    out = [t]
+    words = t.split()
+    honorifics = {"dr": "doctor", "mr": "mister", "mrs": "missus", "ms": "miss", "prof": "professor"}
+    if words and words[0] in honorifics:
+        out.append(" ".join([honorifics[words[0]]] + words[1:]))
+        out.append(" ".join(words[1:]))
+    elif words and words[0] in honorifics.values():
+        out.append(" ".join(words[1:]))
+    return [a for a in out if a]
 
 
 class Attention:
-    def __init__(self, persona_names=()):
-        self.persona_names = [p.lower() for p in persona_names]
+    def __init__(self, persona_names=(), titles=()):
+        self.persona_names = []
+        self.set_personas(persona_names, titles)
         self._follow_until = 0.0
         self._armed_until = 0.0
         self.pushed = False        # push-to-talk currently held
@@ -48,8 +64,17 @@ class Attention:
             ws = list(self.persona_names) + ["genesis"]
         return sorted(set(ws), key=len, reverse=True)
 
-    def set_personas(self, names):
-        self.persona_names = [p.lower() for p in names]
+    def set_personas(self, names, titles=()):
+        """Names plus spoken forms of titles: "Dr. House" gives "dr house",
+        "doctor house" and "house"."""
+        out = []
+        for n in names:
+            out.append(_norm(n))
+        for t in titles:
+            for alias in title_aliases(t):
+                if alias not in out:
+                    out.append(alias)
+        self.persona_names = [a for a in out if a]
 
     # ------------------------------------------------------------------
     def note_reply_finished(self):

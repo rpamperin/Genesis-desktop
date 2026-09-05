@@ -143,6 +143,9 @@ class MainWindow(QMainWindow):
         # ---- docks -------------------------------------------------------
         self.chat = ChatPanel()
         self.chat.submitted.connect(lambda t: self.ctl.submit(t, voice=False))
+        self.chat.session_picked.connect(self.ctl.set_session)
+        self.chat.new_session.connect(self.ctl.new_session)
+        self.chat.delete_session.connect(self.ctl.delete_session)
         self.chat_dock = QDockWidget("Chat", self)
         self.chat_dock.setWidget(self.chat)
         self.chat_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
@@ -182,6 +185,9 @@ class MainWindow(QMainWindow):
         c.persona_changed.connect(self._on_persona)
         c.error.connect(self._on_error)
         c.ui_request.connect(self._on_ui_request)
+        c.sessions_loaded.connect(lambda rows: self.chat.set_sessions(rows, config.get("session")))
+        c.history_loaded.connect(lambda rows: self.chat.load_history(rows, self.ctl.persona_display()))
+        c.account_changed.connect(lambda u: self.status.set("user", u, live=bool(u)))
         config.watch("*", self._on_config)
         self.apply_theme()
         self._on_state(c.state)
@@ -191,7 +197,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def apply_theme(self):
-        self.accent = theme.accent_for(self.ctl.persona)
+        self.accent = theme.accent_for(self.ctl.persona, config.get("theme"))
         QApplication.instance().setStyleSheet(theme.stylesheet(config.get("theme"), self.accent))
         self.visual.set_accent(self.accent)
         self.visual.set_theme(config.get("theme"))
@@ -207,6 +213,8 @@ class MainWindow(QMainWindow):
         elif key == "always_on_top":
             self.setWindowFlag(Qt.WindowStaysOnTopHint, bool(new))
             self.show()
+        elif key == "session":
+            self.chat.set_sessions([{"name": self.chat.sessions.itemText(i)} for i in range(self.chat.sessions.count())], new)
         elif key == "voice_mode":
             i = self.mode_combo.findData(new)
             if i >= 0 and self.mode_combo.currentIndex() != i:
@@ -253,7 +261,7 @@ class MainWindow(QMainWindow):
         self.persona_combo.blockSignals(True)
         self.persona_combo.clear()
         for p in personas:
-            self.persona_combo.addItem(p.get("title", p["name"]), p["name"])
+            self.persona_combo.addItem(self.ctl.persona_display(p["name"]), p["name"])
         i = self.persona_combo.findData(self.ctl.persona)
         self.persona_combo.setCurrentIndex(max(0, i))
         self.persona_combo.blockSignals(False)
@@ -265,7 +273,7 @@ class MainWindow(QMainWindow):
             self.ctl.set_persona(name)
 
     def _on_persona(self, name):
-        title = next((p.get("title", name) for p in self.ctl.personas if p["name"] == name), name.title())
+        title = self.ctl.persona_display(name)
         self.persona_label.setText(title)
         i = self.persona_combo.findData(name)
         if i >= 0 and self.persona_combo.currentIndex() != i:
@@ -273,7 +281,8 @@ class MainWindow(QMainWindow):
             self.persona_combo.setCurrentIndex(i)
             self.persona_combo.blockSignals(False)
         self.apply_theme()
-        self.chat.add_system(f"— {title} —")
+        if not config.get("load_history"):
+            self.chat.add_system(f"— {title} —")
 
     def _on_error(self, msg):
         self.status.flash(msg)

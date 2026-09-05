@@ -5,19 +5,44 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QTextCursor, QTextOption
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QScrollArea, QSizePolicy, QSplitter, QTreeWidget,
-                               QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+                               QPushButton, QScrollArea, QSizePolicy, QSplitter, QToolButton,
+                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 
 class ChatPanel(QWidget):
-    """Bubbles plus a text box. Hidden by default; voice is the main path."""
+    """Bubbles plus a text box. Hidden by default; voice is the main path.
+    The strip at the top picks the conversation (the backend keeps one
+    history per persona per session name)."""
     submitted = Signal(str)
+    session_picked = Signal(str)
+    new_session = Signal()
+    delete_session = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
+        top = QHBoxLayout()
+        self.sessions = QComboBox()
+        self.sessions.setEditable(True)
+        self.sessions.setInsertPolicy(QComboBox.NoInsert)
+        self.sessions.setToolTip("Conversation. Type a new name and press Enter to start one.")
+        self.sessions.lineEdit().returnPressed.connect(
+            lambda: self.session_picked.emit(self.sessions.currentText()))
+        self.sessions.activated.connect(lambda i: self.session_picked.emit(self.sessions.itemText(i)))
+        new = QToolButton()
+        new.setText("New")
+        new.setToolTip("New conversation")
+        new.clicked.connect(self.new_session)
+        rm = QToolButton()
+        rm.setText("Delete")
+        rm.setToolTip("Delete this conversation on the backend")
+        rm.clicked.connect(lambda: self.delete_session.emit(self.sessions.currentText()))
+        top.addWidget(self.sessions, 1)
+        top.addWidget(new)
+        top.addWidget(rm)
+        lay.addLayout(top)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -104,6 +129,33 @@ class ChatPanel(QWidget):
             item = self.vbox.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._current = None
+
+    def set_sessions(self, rows: list, current: str):
+        self.sessions.blockSignals(True)
+        self.sessions.clear()
+        names = [r["name"] for r in rows]
+        if current not in names:
+            names.insert(0, current)
+        for n in names:
+            self.sessions.addItem(n)
+        self.sessions.setCurrentText(current)
+        self.sessions.blockSignals(False)
+
+    def load_history(self, rows: list, title: str = ""):
+        """Replace the bubbles with the backend's transcript."""
+        self.clear()
+        if title:
+            self.add_system(f"— {title} —")
+        for r in rows:
+            role, text = r.get("role"), (r.get("content") or "").strip()
+            if not text:
+                continue
+            if role == "user":
+                self.add_user(text)
+            elif role == "assistant":
+                self._current = None
+                self._bubble("assistant", text + ("  …" if r.get("interrupted") else ""))
         self._current = None
 
     def _scroll_down(self):
